@@ -3,10 +3,11 @@ import { useEffect, useRef } from 'react'
 import { IconButton } from './IconButton'
 import { X } from 'lucide-react'
 
-export function Dialog({ eyebrow, title, description, onClose, children }: {
+export function Dialog({ eyebrow, title, description, closeLabel = 'Close', onClose, children }: {
   eyebrow: string
   title: string
   description: string
+  closeLabel?: string
   onClose: () => void
   children: ReactNode
 }) {
@@ -40,7 +41,7 @@ export function Dialog({ eyebrow, title, description, onClose, children }: {
     <section ref={dialogRef} className="ds-dialog" role="dialog" aria-modal="true" aria-labelledby="ds-dialog-title">
       <header className="ds-dialog__header">
         <div><div className="ds-dialog__eyebrow">{eyebrow}</div><h2 className="ds-dialog__title" id="ds-dialog-title">{title}</h2><p className="ds-dialog__description">{description}</p></div>
-        <IconButton label="Close" onClick={onClose}><X size={19}/></IconButton>
+        <IconButton label={closeLabel} onClick={onClose}><X size={19}/></IconButton>
       </header>
       {children}
     </section>

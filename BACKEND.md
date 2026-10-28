@@ -17,6 +17,16 @@ Lagoon uses Supabase for hosted Postgres, authentication, and private file stora
 5. In **Authentication → Providers → Email**, leave email/password enabled. Configure SMTP before inviting real users. For a quick private prototype you can turn off email confirmation; turn it back on and configure SMTP before public launch.
 6. Run the frontend locally with `npm run dev`. Create an account, add an event, and try a post. Those records are now persisted in the hosted database; event files go into the private `lagoon-attachments` bucket.
 
+## Import the Comune di Venezia tide / water-temperature archive
+
+The prepared file `data/weather/punta-salute-canal-grande-2026-04-to-10.csv` contains the Comune CSV normalized to database columns. It preserves all 52,662 source timestamps and missing values; timestamps remain in the source's fixed UTC+1 solar-time basis.
+
+1. In Supabase **SQL Editor**, run `supabase/migrations/20261028000100_lagoon_weather_observations.sql`. It creates the station and observation tables, grants signed-in users read-only access, records the CC-BY attribution and ZMPS 1897 datum, and adds the Punta Salute Canal Grande station.
+2. In **Table Editor**, select `weather_observations` and choose **Import data from CSV**. Upload `data/weather/punta-salute-canal-grande-2026-04-to-10.csv`; keep the header row enabled and map the four columns by name. Import all rows.
+3. Reload Lagoon. The dashboard reads the latest water temperature, tide level and 24-hour trend from Supabase; **History** shows the latest imported observations.
+
+The source file is raw and can contain sensor gaps. The import retains blank tide readings and does not interpolate or validate them.
+
 ## Enable social sign-in
 
 The login screen includes Google and Instagram buttons. Each provider needs its own credentials in Supabase; the browser never receives the provider secret.

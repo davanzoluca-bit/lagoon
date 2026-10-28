@@ -2,6 +2,8 @@ export type Session = { access_token: string; refresh_token: string; expires_at?
 export type EventRow = { id: string; event_type: string; event_date: string; note: string; created_at: string; event_attachments?: { file_name: string; object_path: string }[] }
 export type PostRow = { id: string; body: string; created_at: string; author_id: string }
 export type MessageRow = { id: string; body: string; created_at: string; sender_id: string }
+export type WeatherStationRow = { id: string; slug: string; name: string; area: string; source_url: string; source_license: string; source_time_basis: string; vertical_datum: string }
+export type WeatherObservationRow = { recorded_at: string; tide_level_m: number | null; water_temp_c: number | null }
 
 const url = import.meta.env.VITE_SUPABASE_URL?.replace(/\/(?:rest\/v1|auth\/v1|graphql\/v1)\/?$/, '').replace(/\/$/, '')
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
@@ -77,3 +79,8 @@ export const getPosts = () => request<PostRow[]>('posts?select=*&order=created_a
 export const createPost = (body: string) => request('posts', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ body }) })
 export const getMessages = () => request<MessageRow[]>('messages?select=*&order=created_at.asc&limit=200')
 export const createMessage = (body: string) => request('messages', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ body }) })
+export async function getWeatherStation() {
+  const rows = await request<WeatherStationRow[]>('weather_stations?select=id,slug,name,area,source_url,source_license,source_time_basis,vertical_datum&slug=eq.punta-salute-canal-grande&limit=1')
+  return rows[0] ?? null
+}
+export const getWeatherObservations = (stationId: string, limit = 288) => request<WeatherObservationRow[]>(`weather_observations?select=recorded_at,tide_level_m,water_temp_c&station_id=eq.${stationId}&order=recorded_at.desc&limit=${limit}`)

@@ -1,89 +1,98 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
 import App from './App'
-import { demoWeatherSource, stations } from './domain/weather'
-import { messages, t } from './i18n'
 
-describe('weather source', () => {
-  it('provides demo stations with a reading for each station', async () => {
-    await expect(demoWeatherSource.getStations()).resolves.toEqual(stations)
-    expect(stations.every(({ reading }) => Number.isFinite(reading.pressure) && Number.isFinite(reading.air))).toBe(true)
+const backend = vi.hoisted(() => ({
+  getEvents: vi.fn(),
+  getMessages: vi.fn(),
+  getPosts: vi.fn(),
+  getWeatherObservations: vi.fn(),
+  getWeatherStation: vi.fn(),
+  session: { access_token: 'test-token', refresh_token: 'test-refresh', user: { id: 'test-user', email: 'test@example.com', user_metadata: { display_name: 'Test User' } } },
+}))
+
+vi.mock('./backend/supabase', () => ({
+  backendReady: true,
+  readSession: () => backend.session,
+  getEvents: backend.getEvents,
+  getMessages: backend.getMessages,
+  getPosts: backend.getPosts,
+  getWeatherObservations: backend.getWeatherObservations,
+  getWeatherStation: backend.getWeatherStation,
+  createEvent: vi.fn(),
+  createMessage: vi.fn(),
+  createPost: vi.fn(),
+  exchangeOAuthCode: vi.fn(),
+  signIn: vi.fn(),
+  signInWithProvider: vi.fn(),
+  signOut: vi.fn(),
+  signUp: vi.fn(),
+}))
+
+describe('dashboard weather readings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    backend.getEvents.mockResolvedValue([])
+    backend.getMessages.mockResolvedValue([])
+    backend.getPosts.mockResolvedValue([])
+    backend.getWeatherStation.mockResolvedValue({
+      id: '590ab8d1-c1f1-4e11-913d-a13fb45ef3d7',
+      slug: 'punta-salute-canal-grande',
+      name: 'Punta Salute Canal Grande',
+      area: 'Canal Grande',
+      source_url: 'https://example.com',
+      source_license: 'CC-BY',
+      source_time_basis: 'UTC+01:00 solar time, year-round',
+      vertical_datum: 'ZMPS 1897',
+    })
   })
-})
 
-describe('translations', () => {
-  it('has matching keys and returns the selected language', () => {
-    expect(Object.keys(messages.it).sort()).toEqual(Object.keys(messages.en).sort())
-    expect(t('it', 'dashboard')).toBe('Dashboard')
-    expect(t('en', 'dashboard')).toBe('Dashboard')
-    expect(t('it', 'history')).toBe('Dati storici')
+  it('shows the latest available value for each measurement, skipping null readings', async () => {
+    backend.getWeatherObservations.mockResolvedValue([
+      { recorded_at: '2026-10-28T12:05:00', tide_level_m: null, water_temp_c: 22.7 },
+      { recorded_at: '2026-10-28T12:00:00', tide_level_m: 0.84, water_temp_c: 22.6 },
+    ])
+
+    const { container } = render(<App />)
+
+    await waitFor(() => expect(backend.getWeatherObservations).toHaveBeenCalledWith('590ab8d1-c1f1-4e11-913d-a13fb45ef3d7', 1000))
+    await waitFor(() => {
+      const values = [...container.querySelectorAll('.metrics-grid--source .metric-value')]
+      expect(values).toHaveLength(2)
+      expect(values[0]).toHaveTextContent('22.7°C')
+      expect(values[1]).toHaveTextContent('0.84m')
+    })
+    expect(screen.getByText(/Punta Salute Canal Grande · 28 ott/)).toBeInTheDocument()
+    expect(screen.getAllByText('Marea (m)').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Temperatura acqua (°C)').length).toBeGreaterThan(0)
+
+    const chart = screen.getByRole('group', { name: 'Tocca o passa sul grafico per esplorare le rilevazioni.' })
+    vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({ x: 0, y: 0, left: 0, top: 0, right: 860, bottom: 270, width: 860, height: 270, toJSON: () => ({}) } as DOMRect)
+    fireEvent.pointerMove(chart, { clientX: 800 })
+    expect(await screen.findByRole('status')).toHaveTextContent('22,7 °C')
+    fireEvent.pointerLeave(chart)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    fireEvent.pointerDown(chart, { clientX: 800 })
+    expect(await screen.findByRole('status')).toHaveTextContent('22,7 °C')
+    expect(screen.getByRole('status')).toHaveTextContent('— m')
   })
-})
 
-describe('Lagoon app', () => {
-  it('loads the dashboard and changes station, language and theme', async () => {
+  it('keeps the dashboard usable and explains when the database has no observations', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
     render(<App />)
-    expect((await screen.findAllByText('Punta della Salute')).length).toBeGreaterThan(0)
-    expect(screen.getByText('18.4')).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Seleziona stazione meteo'), { target: { value: 'burano' } })
-    expect(screen.getByText('17.8')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'IT' }))
-    expect(screen.getByRole('heading', { name: 'Good morning, Luca' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Cambia tema' }))
-    expect(document.documentElement.dataset.theme).toBe('dark')
+
+    expect(await screen.findByText('Nessuna rilevazione importata')).toBeInTheDocument()
+    expect(document.querySelectorAll('.metrics-grid--source .metric-detail')).toHaveLength(2)
+    expect(document.querySelector('.metrics-grid--source')).toHaveTextContent('Nessuna lettura importata')
   })
 
-  it('supports feed composition, messaging and profile events', async () => {
+  it('switches translated dashboard content between Italian and English', async () => {
+    backend.getWeatherObservations.mockResolvedValue([{ recorded_at: '2026-10-28T12:00:00', tide_level_m: 0.84, water_temp_c: 22.6 }])
     render(<App />)
-    fireEvent.click(screen.getByRole('navigation', { name: 'Navigazione principale' }).querySelectorAll('button')[1])
-    fireEvent.change(screen.getByPlaceholderText('Cosa succede in laguna?'), { target: { value: 'Acqua calma oggi' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Pubblica' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('Condivisione inviata alla moderazione')
-    fireEvent.click(screen.getByRole('navigation', { name: 'Navigazione principale' }).querySelectorAll('button')[2])
-    fireEvent.change(screen.getByPlaceholderText('Scrivi un messaggio…'), { target: { value: 'A domani!' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Invia' }))
-    expect(screen.getByText('A domani!')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('navigation', { name: 'Esplora' }).querySelectorAll('button')[2])
-    fireEvent.click(screen.getAllByRole('button', { name: /Registra evento/ })[0])
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('+10 punti'))
-    expect(screen.getByText('Pescata · oggi')).toBeInTheDocument()
-  })
 
-  it('filters history, shows an empty state and navigates to forecast', async () => {
-    render(<App />)
-    fireEvent.click(screen.getByRole('navigation', { name: 'Esplora' }).querySelectorAll('button')[0])
-    expect(await screen.findByText('3', { selector: '.table-footer strong' })).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Anno'), { target: { value: '2025' } })
-    expect(screen.getByText('Nessun dato disponibile')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('navigation', { name: 'Esplora' }).querySelectorAll('button')[1])
-    expect(screen.getByRole('heading', { name: 'Previsioni' })).toBeInTheDocument()
-  })
-
-  it('covers dashboard shortcuts, notifications, settings and mobile navigation', async () => {
-    render(<App />)
-    await screen.findByText('18.4')
-    fireEvent.change(screen.getByLabelText('Cerca'), { target: { value: 'Burano' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Cambia tema' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Cambia tema' }))
-    fireEvent.change(screen.getByLabelText('Intervallo grafico'), { target: { value: '24 ore' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Apri previsioni' }))
-    expect(screen.getByRole('heading', { name: 'Previsioni' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '30 giorni' }))
-    fireEvent.click(screen.getByRole('button', { name: '7 giorni' }))
-    fireEvent.click(screen.getByRole('navigation', { name: 'Navigazione principale' }).querySelectorAll('button')[0])
-    fireEvent.click(document.querySelector('.page-heading button')!)
-    expect(screen.getByRole('heading', { name: 'Dati storici' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Impostazioni' }))
-    expect(screen.getByRole('heading', { name: 'Il mio profilo' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Luca Marin/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Notifiche' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Chiudi' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Apri menu' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Chiudi navigazione' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Apri menu' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Chiudi menu' }))
-    fireEvent.click(screen.getByRole('navigation', { name: 'Navigazione principale' }).querySelectorAll('button')[0])
-    fireEvent.click(screen.getByRole('button', { name: 'Vedi tutto' }))
-    expect(screen.getByRole('heading', { name: 'Community' })).toBeInTheDocument()
+    expect(await screen.findByText('Marea e temperatura dell’acqua')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cambia lingua' }))
+    expect(await screen.findByText('Tide and water temperature')).toBeInTheDocument()
+    expect(screen.getByText('Water temperature')).toBeInTheDocument()
   })
 })

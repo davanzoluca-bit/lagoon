@@ -1,10 +1,8 @@
 export type HistoryRow = {
-  date: string
+  recordedAt: string
   station: string
-  air: number
-  water: number
-  wind: string
-  pressure: number
+  tideLevel: number | null
+  waterTemp: number | null
 }
 
 export type WeatherReading = { time: string; pressure: number; air: number; water: number; humidity: number; rain: number; windSpeed: number; windDirection: string }
