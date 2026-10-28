@@ -1,4 +1,4 @@
-import { parseLiveWaterObservations } from '../src/domain/liveWeather'
+import { parseLiveWaterObservations } from '../src/domain/liveWeather.js'
 
 declare const process: { env: Record<string, string | undefined> }
 
