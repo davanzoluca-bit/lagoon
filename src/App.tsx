@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, ArrowRight, Bell, CalendarDays, ChevronDown, ChevronRight, Fish, LayoutDashboard, LocateFixed, MapPin, Menu, MessageCircle, Moon, Paperclip, Pencil, Plus, Search, Send, Settings, ShieldCheck, Sun, Sunrise, Sunset, Thermometer, Trash2, UserRound, Users, Waves, X } from 'lucide-react'
+import { Activity, ArrowRight, Bell, CalendarDays, ChevronDown, ChevronRight, Fish, LayoutDashboard, LocateFixed, MapPin, Menu, MessageCircle, Moon, Paperclip, Pencil, Plus, Search, Send, Settings, ShieldCheck, Sun, Sunrise, Sunset, Thermometer, Trash2, UserCheck, UserPlus, UserRound, UserX, Users, Waves, X } from 'lucide-react'
 import type { HistoryRow } from './domain/weather'
-import { backendReady, createEvent, createMessage, createPost, deleteEvent as removeEvent, exchangeOAuthCode, getEventAttachmentUrl, getEvents, getFishSpecies, getMessages, getPosts, getWeatherObservations, getWeatherStation, readSession, signIn, signInWithProvider, signOut, signUp, type EventAttachmentRow, type EventCatchInput, type EventRow, type FishSpeciesRow, type MessageRow, type PostRow, type Session, type WeatherObservationRow, type WeatherStationRow, updateEvent } from './backend/supabase'
+import { acceptFriendRequest, backendReady, createEvent, createMessage, createPost, deleteEvent as removeEvent, exchangeOAuthCode, getAcceptedFriends, getEventAttachmentUrl, getEvents, getFishSpecies, getFriendConnections, getMessages, getPosts, getPostMediaUrl, getWeatherObservations, getWeatherStation, readSession, removeFriendConnection, searchUsers, sendFriendRequest, signIn, signInWithProvider, signOut, signUp, type EventAttachmentRow, type EventCatchInput, type EventRow, type FishSpeciesRow, type FriendConnection, type FriendProfileRow, type MessageRow, type PostRow, type Session, type WeatherObservationRow, type WeatherStationRow, updateEvent } from './backend/supabase'
 import { t, type Language, type TranslationKey } from './i18n'
 import { AuthScreen, Avatar, Button, Card, CardHeader, Dialog, Field, IconButton, MetricCard, PageHeading, Switch } from './design-system'
 import { getSolarTimes, searchPlaces, type PlaceResult, type SolarTimes } from './services/solar'
 
 type Page = 'dashboard' | 'feed' | 'chat' | 'history' | 'forecast' | 'profile'
 type UserEventCatch = { id: string; speciesId: number; speciesNameIt: string; speciesNameEn: string; quantity: number; caughtOn: string | null; caughtTime: string | null; latitude: number | null; longitude: number | null }
-type UserEvent = { id: string; type: string; date: string; startAt: string | null; endAt: string | null; note: string; attachments: EventAttachmentRow[]; catches: UserEventCatch[] }
+type UserEvent = { id: string; ownerId: string; isShared: boolean; type: string; date: string; startAt: string | null; endAt: string | null; note: string; tags: string[]; sharedUserIds: string[]; attachments: EventAttachmentRow[]; catches: UserEventCatch[] }
 type CatchDraft = { key: string; speciesId: string; quantity: string; caughtOn: string; caughtTime: string; latitude: string; longitude: string }
 type UserLocation = { name: string; country: string; latitude: number; longitude: number; source: 'gps' | 'manual' | 'fallback' }
 
 const locationStorageKey = 'lagoon.user-location'
 const veniceLocation: UserLocation = { name: 'Venezia', country: 'Italia', latitude: 45.4408, longitude: 12.3155, source: 'fallback' }
 
-function mapEvent(item: EventRow): UserEvent {
+function mapEvent(item: EventRow, currentUserId: string): UserEvent {
   return {
-    id: item.id, type: item.event_type, date: item.event_date, startAt: item.start_at, endAt: item.end_at, note: item.note,
+    id: item.id, ownerId: item.owner_id, isShared: item.owner_id !== currentUserId, type: item.event_type, date: item.event_date, startAt: item.start_at, endAt: item.end_at, note: item.note, tags: item.tags ?? [], sharedUserIds: (item.event_participants ?? []).map((participant) => participant.user_id),
     attachments: item.event_attachments ?? [],
     catches: (item.event_catches ?? []).map((itemCatch) => ({
       id: itemCatch.id, speciesId: itemCatch.species_id,
@@ -74,6 +74,7 @@ export default function App() {
   const [period, setPeriod] = useState('7 giorni')
   const [toast, setToast] = useState('')
   const [post, setPost] = useState('')
+  const [postFiles, setPostFiles] = useState<File[]>([])
   const [messages, setMessages] = useState<MessageRow[]>([])
   const [posts, setPosts] = useState<PostRow[]>([])
   const [weatherStation, setWeatherStation] = useState<WeatherStationRow | null>(null)
@@ -110,7 +111,7 @@ export default function App() {
   useEffect(() => {
     if (!session) return
     Promise.all([getEvents(), getPosts(), getMessages()]).then(([eventRows, postRows, messageRows]) => {
-      setEvents(eventRows.map(mapEvent))
+      setEvents(eventRows.map((item) => mapEvent(item, session.user.id)))
       setPosts(postRows); setMessages(messageRows)
     }).catch((cause: Error) => setError(cause.message))
     getWeatherStation().then(async (stationRow) => {
@@ -209,7 +210,7 @@ export default function App() {
     {mobileNav && <button className="nav-scrim" aria-label={tr('closeNavigation')} onClick={() => setMobileNav(false)} />}
     <main className="main-area">
       <header className="topbar"><div className="breadcrumbs"><IconButton className="mobile-menu" label={tr('openMenu')} onClick={() => setMobileNav(true)}><Menu size={21}/></IconButton><span>{tr('area')}</span><ChevronRight size={14}/><strong>{tr(({ dashboard: 'dashboard', feed: 'feed', chat: 'chat', history: 'history', forecast: 'forecast', profile: 'profile' } as const)[page])}</strong></div><div className="top-actions"><label className="search-box"><Search size={16}/><input aria-label={tr('search')} placeholder={`${tr('search')}…`} value={search} onChange={(e) => setSearch(e.target.value)}/><kbd>⌘ K</kbd></label><IconButton className="theme-toggle" onClick={() => setDark(!dark)} label={tr('changeTheme')}>{dark ? <Sun size={18}/> : <Moon size={18}/>}</IconButton><IconButton className="language-toggle" onClick={() => setLang(lang === 'it' ? 'en' : 'it')} label={tr('changeLanguage')}>{lang.toUpperCase()}</IconButton><IconButton className="notification-button" label={tr('notifications')} onClick={() => setToast(tr('noNotifications'))}><Bell size={18}/></IconButton><Avatar initials={(session.user.email ?? 'U').slice(0, 2).toUpperCase()} tone="me" className="top-avatar"/></div></header>
-      <div className="page-content">{error && <div className="backend-error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}{page === 'dashboard' && <Dashboard posts={posts} sessionName={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} station={weatherStation} observations={weatherObservations} events={events} locationLabel={locationLabel} locationReady={locationReady} sunTimes={sunTimes} solarLoading={solarLoading} solarError={solarError} tr={tr} lang={lang} go={go}/ >}{page === 'feed' && <Feed tr={tr} post={post} setPost={setPost} posts={posts} onPost={async () => { if (post.trim()) { try { await createPost(post.trim()); setPosts(await getPosts()); setPost(''); setToast(tr('postPublished')) } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'chat' && <Chat tr={tr} messages={messages} draft={draft} setDraft={setDraft} onSend={async () => { if (draft.trim()) { try { await createMessage(draft.trim()); setMessages(await getMessages()); setDraft('') } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'history' && <HistoryPage tr={tr} search={search} setSearch={setSearch} year={year} setYear={setYear} rows={filteredHistory}/ >}{page === 'forecast' && <Forecast tr={tr} period={period} setPeriod={setPeriod}/ >}{page === 'profile' && <Profile tr={tr} lang={lang} name={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} events={events} eventModalOpen={eventModalOpen} eventType={eventType} eventDate={eventDate} eventNote={eventNote} eventFiles={eventFiles} setEventType={setEventType} setEventDate={setEventDate} setEventNote={setEventNote} setEventFiles={setEventFiles} setEventModalOpen={setEventModalOpen} onOpenEvent={() => { setEventType('Fishing trip'); setEventDate(localDateValue()); setEventNote(''); setEventFiles([]); setEventModalOpen(true) }} onCloseEvent={() => setEventModalOpen(false)} onSaveEvent={async (event) => { try { const fields = { event_type: event.type, event_date: event.date, start_at: event.startAt ? new Date(event.startAt).toISOString() : null, end_at: event.endAt ? new Date(event.endAt).toISOString() : null, note: event.note }; if (event.id) await updateEvent(event.id, fields, event.catches, event.attachments); else await createEvent(fields, event.catches, event.attachments); setEvents((await getEvents()).map(mapEvent)); setEventModalOpen(false); setToast(tr(event.id ? 'eventUpdated' : 'eventSaved')) } catch (cause) { setError((cause as Error).message) } }} onDeleteEvent={async (eventId) => { try { await removeEvent(eventId); setEvents((current) => current.filter((event) => event.id !== eventId)); setToast(tr('eventDeleted')) } catch (cause) { setError((cause as Error).message) } }}/>}</div>
+      <div className="page-content">{error && <div className="backend-error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}{page === 'dashboard' && <Dashboard posts={posts} sessionName={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} station={weatherStation} observations={weatherObservations} events={events} locationLabel={locationLabel} locationReady={locationReady} sunTimes={sunTimes} solarLoading={solarLoading} solarError={solarError} tr={tr} lang={lang} go={go}/ >}{page === 'feed' && <Feed tr={tr} lang={lang} userId={session.user.id} post={post} setPost={setPost} postFiles={postFiles} setPostFiles={setPostFiles} posts={posts} onPost={async () => { if (post.trim() || postFiles.length) { try { await createPost(post.trim(), postFiles); setPosts(await getPosts()); setPost(''); setPostFiles([]); setToast(tr('postPublished')) } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'chat' && <Chat tr={tr} messages={messages} draft={draft} setDraft={setDraft} onSend={async () => { if (draft.trim()) { try { await createMessage(draft.trim()); setMessages(await getMessages()); setDraft('') } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'history' && <HistoryPage tr={tr} search={search} setSearch={setSearch} year={year} setYear={setYear} rows={filteredHistory}/ >}{page === 'forecast' && <Forecast tr={tr} period={period} setPeriod={setPeriod}/ >}{page === 'profile' && <Profile tr={tr} lang={lang} userId={session.user.id} name={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} events={events} eventModalOpen={eventModalOpen} eventType={eventType} eventDate={eventDate} eventNote={eventNote} eventFiles={eventFiles} setEventType={setEventType} setEventDate={setEventDate} setEventNote={setEventNote} setEventFiles={setEventFiles} setEventModalOpen={setEventModalOpen} onOpenEvent={() => { setEventType('Fishing trip'); setEventDate(localDateValue()); setEventNote(''); setEventFiles([]); setEventModalOpen(true) }} onCloseEvent={() => setEventModalOpen(false)} onSaveEvent={async (event) => { try { const fields = { event_type: event.type, event_date: event.date, start_at: event.startAt ? new Date(event.startAt).toISOString() : null, end_at: event.endAt ? new Date(event.endAt).toISOString() : null, note: event.note, tags: event.tags }; if (event.id) await updateEvent(event.id, fields, event.catches, event.sharedUserIds, event.attachments); else await createEvent(fields, event.catches, event.sharedUserIds, event.attachments); setEvents((await getEvents()).map((item) => mapEvent(item, session.user.id))); setEventModalOpen(false); setToast(tr(event.id ? 'eventUpdated' : 'eventSaved')) } catch (cause) { setError((cause as Error).message) } }} onDeleteEvent={async (eventId) => { try { await removeEvent(eventId); setEvents((current) => current.filter((event) => event.id !== eventId)); setToast(tr('eventDeleted')) } catch (cause) { setError((cause as Error).message) } }}/>}</div>
       <footer className="page-footer"><span>{tr('connectedCloud')}</span><span><button onClick={() => { signOut(); setSession(null) }}>{tr('signOut')}</button> <span className="footer-sep">·</span> Lagoon <Waves size={13}/></span></footer>
     </main>
     {toast && <div className="toast" role="status"><ShieldCheck size={17}/>{toast}<IconButton label={tr('close')} onClick={() => setToast('')}><X size={15}/></IconButton></div>}
@@ -353,7 +354,7 @@ function ObservationChart({ rows, events, showEvents, lang, tr }: { rows: Weathe
   const valueLabel = (value: number | null) => value === null ? '—' : axisNumber(value)
 
   return <>
-    <div className="observation-legend"><span><i className="observation-legend__water"/>{tr('axisWater')}</span><span><i className="observation-legend__tide"/>{tr('axisTide')}</span></div>
+    <div className="observation-legend"><span><i className="observation-legend__water"/>{tr('axisWater')}</span><span><i className="observation-legend__tide"/>{tr('axisTide')}</span>{visibleEvents.some((event) => event.isShared) && <span><i className="observation-legend__shared"/>{tr('sharedEventLegend')}</span>}</div>
     <div ref={chartRef} className="observation-chart-wrap" role="group" aria-label={tr('chartHint')} tabIndex={0}
       onPointerMove={(event) => { if (!pinned) selectFromPointer(event) }}
       onPointerDown={(event) => { selectFromPointer(event); setPinned(true) }}
@@ -364,7 +365,7 @@ function ObservationChart({ rows, events, showEvents, lang, tr }: { rows: Weathe
         <text x="15" y={(top + bottom) / 2} textAnchor="middle" className="observation-axis-title" transform={`rotate(-90 15 ${(top + bottom) / 2})`}>{tr('axisTide')}</text>
         <text x={width - 12} y={(top + bottom) / 2} textAnchor="middle" className="observation-axis-title" transform={`rotate(90 ${width - 12} ${(top + bottom) / 2})`}>{tr('axisWater')}</text>
         <path d={water.path} className="observation-line observation-line--water"/><path d={tide.path} className="observation-line observation-line--tide"/>
-        {eventPositions.map(({ event, x, y }) => { const EventIcon = /fish|pesca/i.test(event.type) ? Fish : /measure|misuraz/i.test(event.type) ? Thermometer : /note|nota/i.test(event.type) ? MessageCircle : CalendarDays; return <g key={event.id} className="observation-event-marker" role="button" tabIndex={0} aria-label={`${tr('event')}: ${eventTypeLabel(event.type, tr)} · ${dateFormat(event.date, { day: 'numeric', month: 'long', year: 'numeric' })}`} onPointerDown={(pointerEvent) => pointerEvent.stopPropagation()} onClick={(clickEvent) => { clickEvent.stopPropagation(); setSelectedEvent(event) }} onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' || keyEvent.key === ' ') { keyEvent.preventDefault(); keyEvent.stopPropagation(); setSelectedEvent(event) } }}><title>{eventTypeLabel(event.type, tr)} · {dateFormat(event.date, { day: 'numeric', month: 'long', year: 'numeric' })}</title><line x1={x} x2={x} y1={y + 9} y2={bottom + 1} className="observation-event-marker__stem"/><circle cx={x} cy={y} r="9" className="observation-event-marker__dot"/><EventIcon x={x - 5} y={y - 5} size={10} className="observation-event-marker__icon"/></g> })}
+        {eventPositions.map(({ event, x, y }) => { const EventIcon = /fish|pesca/i.test(event.type) ? Fish : /measure|misuraz/i.test(event.type) ? Thermometer : /note|nota/i.test(event.type) ? MessageCircle : CalendarDays; return <g key={event.id} className={`observation-event-marker ${event.isShared ? 'observation-event-marker--shared' : ''}`} role="button" tabIndex={0} aria-label={`${event.isShared ? `${tr('sharedEvent')} · ` : ''}${tr('event')}: ${eventTypeLabel(event.type, tr)} · ${dateFormat(event.date, { day: 'numeric', month: 'long', year: 'numeric' })}`} onPointerDown={(pointerEvent) => pointerEvent.stopPropagation()} onClick={(clickEvent) => { clickEvent.stopPropagation(); setSelectedEvent(event) }} onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' || keyEvent.key === ' ') { keyEvent.preventDefault(); keyEvent.stopPropagation(); setSelectedEvent(event) } }}><title>{eventTypeLabel(event.type, tr)} · {dateFormat(event.date, { day: 'numeric', month: 'long', year: 'numeric' })}</title><line x1={x} x2={x} y1={y + 9} y2={bottom + 1} className="observation-event-marker__stem"/><circle cx={x} cy={y} r="9" className="observation-event-marker__dot"/><EventIcon x={x - 5} y={y - 5} size={10} className="observation-event-marker__icon"/></g> })}
         {selectedX !== null && <><line x1={selectedX} x2={selectedX} y1={top} y2={bottom} className="observation-crosshair"/>{selectedWaterY !== null && <circle cx={selectedX} cy={selectedWaterY} r="4.5" className="observation-point observation-point--water"/>}{selectedTideY !== null && <circle cx={selectedX} cy={selectedTideY} r="4.5" className="observation-point observation-point--tide"/>}</>}
         {xTicks.map((index) => { const row = rows[index]; return <g key={index}><line x1={xAt(index)} x2={xAt(index)} y1={bottom} y2={bottom + 4} className="observation-axis-tick"/><text x={xAt(index)} y={bottom + 20} textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'} className="observation-axis-label">{dateFormat(row.recorded_at, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</text></g> })}
       </svg>
@@ -379,7 +380,62 @@ function ObservationChart({ rows, events, showEvents, lang, tr }: { rows: Weathe
   </>
 }
 
-function Feed({ tr, post, setPost, posts, onPost }: { tr: Tr; post: string; setPost: (v: string) => void; posts: PostRow[]; onPost: () => void }) { return <><PageHeading eyebrow={tr('feedEyebrow')} title={tr('feed')} subtitle={tr('feedSubtitle')}/><Card className="composer"><textarea value={post} onChange={(e) => setPost(e.target.value)} placeholder={tr('newPost')}/><div className="composer-bottom"><Button variant="primary" disabled={!post.trim()} onClick={onPost}>{tr('publish')}<ArrowRight size={15}/></Button></div></Card><div className="feed-list">{posts.length ? posts.map((item) => <Card key={item.id} className="community-entry"><p>{item.body}</p><small>{new Date(item.created_at).toLocaleString()}</small></Card>) : <Card className="empty-state">{tr('shareFirst')}</Card>}</div></> }
+function Feed({ tr, lang, userId, post, setPost, postFiles, setPostFiles, posts, onPost }: { tr: Tr; lang: Language; userId: string; post: string; setPost: (v: string) => void; postFiles: File[]; setPostFiles: (files: File[]) => void; posts: PostRow[]; onPost: () => Promise<void> }) {
+  const [connections, setConnections] = useState<FriendConnection[]>([])
+  const [friendQuery, setFriendQuery] = useState('')
+  const [friendResults, setFriendResults] = useState<FriendProfileRow[]>([])
+  const [directoryError, setDirectoryError] = useState('')
+  const [posting, setPosting] = useState(false)
+  const [postMediaUrls, setPostMediaUrls] = useState<Record<string, string>>({})
+  const refreshConnections = async () => setConnections(await getFriendConnections(userId))
+  useEffect(() => { refreshConnections().catch((cause: Error) => setDirectoryError(cause.message)) }, [userId])
+  useEffect(() => {
+    if (!friendQuery.trim()) { setFriendResults([]); return }
+    let active = true
+    const timeout = window.setTimeout(() => searchUsers(userId, friendQuery).then((results) => { if (active) setFriendResults(results) }).catch((cause: Error) => { if (active) setDirectoryError(cause.message) }), 220)
+    return () => { active = false; window.clearTimeout(timeout) }
+  }, [friendQuery, userId])
+  useEffect(() => {
+    let active = true
+    const media = posts.flatMap((item) => item.post_attachments ?? [])
+    Promise.all(media.map(async (item) => [item.object_path, await getPostMediaUrl(item.object_path)] as const))
+      .then((entries) => { if (active) setPostMediaUrls(Object.fromEntries(entries)) })
+      .catch(() => { if (active) setPostMediaUrls({}) })
+    return () => { active = false }
+  }, [posts])
+  const runFriendAction = async (action: () => Promise<unknown>) => {
+    try { setDirectoryError(''); await action(); await refreshConnections() }
+    catch (cause) { setDirectoryError((cause as Error).message) }
+  }
+  const incoming = connections.filter((item) => item.status === 'pending' && item.incoming)
+  const outgoing = connections.filter((item) => item.status === 'pending' && !item.incoming)
+  const friends = connections.filter((item) => item.status === 'accepted')
+  return <>
+    <PageHeading eyebrow={tr('feedEyebrow')} title={tr('feed')} subtitle={tr('feedSubtitle')}/>
+    <div className="feed-page-grid">
+      <section className="feed-main-column">
+        <Card className="composer">
+          <textarea value={post} onChange={(e) => setPost(e.target.value)} placeholder={tr('newPost')}/>
+          <div className="post-media-picker">
+            <label className="ds-upload"><Paperclip size={17}/><span className="ds-upload__copy"><strong className="ds-upload__title">{tr('feedMedia')}</strong><small className="ds-upload__hint">{tr('feedMediaHint')}</small></span><input type="file" accept="image/*,video/*" multiple onChange={(e) => setPostFiles([...postFiles, ...Array.from(e.target.files ?? [])])}/></label>
+            {postFiles.length > 0 && <ul className="ds-attachment-list">{postFiles.map((file, index) => <li key={`${file.name}-${index}`}><Paperclip size={13}/><span>{file.name}</span><small>{(file.size / 1024 / 1024).toFixed(1)} MB</small><IconButton label={`${tr('removeMedia')}: ${file.name}`} onClick={() => setPostFiles(postFiles.filter((_, fileIndex) => fileIndex !== index))}><X size={14}/></IconButton></li>)}</ul>}
+          </div>
+          <div className="composer-bottom"><Button variant="primary" disabled={posting || (!post.trim() && postFiles.length === 0)} onClick={async () => { setPosting(true); try { await onPost() } finally { setPosting(false) } }}>{posting ? tr('pleaseWait') : tr('publish')}<ArrowRight size={15}/></Button></div>
+        </Card>
+        <div className="feed-list">{posts.length ? posts.map((item) => <Card key={item.id} className="community-entry">{item.body && <p>{item.body}</p>}{(item.post_attachments ?? []).length > 0 && <div className="post-media-grid">{item.post_attachments!.map((media) => { const mediaUrl = postMediaUrls[media.object_path]; return <div className="post-media-item" key={media.object_path}>{mediaUrl ? media.content_type.startsWith('video/') ? <video src={mediaUrl} controls preload="metadata" aria-label={media.file_name}/> : <img src={mediaUrl} alt={media.file_name}/> : <span>{tr('attachmentLoading')}</span>}</div> })}</div>}<small>{new Date(item.created_at).toLocaleString(lang === 'it' ? 'it-IT' : 'en-GB')}</small></Card>) : <Card className="empty-state">{tr('shareFirst')}</Card>}</div>
+      </section>
+      <Card className="friends-directory">
+        <CardHeader eyebrow={tr('friends')} title={tr('friends')}/>
+        <Field label={tr('searchFriends')}><input className="ds-field__control" value={friendQuery} onChange={(e) => setFriendQuery(e.target.value)} placeholder={tr('searchFriends')}/></Field>
+        {directoryError && <p className="backend-error" role="alert">{directoryError}</p>}
+        {friendQuery.trim() && <div className="friend-results">{friendResults.map((profile) => { const connection = connections.find((item) => item.profile.id === profile.id); return <div className="friend-row" key={profile.id}><Avatar initials={(profile.display_name || '?').slice(0, 2).toUpperCase()} tone="sea"/><span>{profile.display_name || profile.id}</span>{!connection && <IconButton label={`${tr('addFriend')}: ${profile.display_name}`} onClick={() => runFriendAction(() => sendFriendRequest(profile.id))}><UserPlus size={16}/></IconButton>}{connection?.status === 'accepted' && <IconButton label={`${tr('removeFriend')}: ${profile.display_name}`} onClick={() => runFriendAction(() => removeFriendConnection(connection.id))}><UserCheck size={16}/></IconButton>}{connection?.status === 'pending' && <small>{connection.incoming ? tr('incomingRequests') : tr('outgoingRequests')}</small>}</div> })}{friendResults.length === 0 && <p className="empty-state">{tr('noMatchingFriends')}</p>}</div>}
+        <section className="friend-section"><h3>{tr('incomingRequests')}</h3>{incoming.map((item) => <div className="friend-row" key={item.id}><Avatar initials={(item.profile.display_name || '?').slice(0, 2).toUpperCase()} tone="sea"/><span>{item.profile.display_name || item.profile.id}</span><IconButton label={`${tr('acceptFriend')}: ${item.profile.display_name}`} onClick={() => runFriendAction(() => acceptFriendRequest(item.id))}><UserCheck size={16}/></IconButton><IconButton label={`${tr('declineFriend')}: ${item.profile.display_name}`} onClick={() => runFriendAction(() => removeFriendConnection(item.id))}><UserX size={16}/></IconButton></div>)}{incoming.length === 0 && <small>{tr('noFriendRequests')}</small>}</section>
+        <section className="friend-section"><h3>{tr('outgoingRequests')}</h3>{outgoing.map((item) => <div className="friend-row" key={item.id}><Avatar initials={(item.profile.display_name || '?').slice(0, 2).toUpperCase()} tone="sea"/><span>{item.profile.display_name || item.profile.id}</span><small>{tr('friendRequestSent')}</small><IconButton label={`${tr('declineFriend')}: ${item.profile.display_name}`} onClick={() => runFriendAction(() => removeFriendConnection(item.id))}><X size={15}/></IconButton></div>)}{outgoing.length === 0 && <small>{tr('noFriendRequests')}</small>}</section>
+        <section className="friend-section"><h3>{tr('friends')}</h3>{friends.map((item) => <div className="friend-row" key={item.id}><Avatar initials={(item.profile.display_name || '?').slice(0, 2).toUpperCase()} tone="sea"/><span>{item.profile.display_name || item.profile.id}</span><IconButton label={`${tr('removeFriend')}: ${item.profile.display_name}`} onClick={() => runFriendAction(() => removeFriendConnection(item.id))}><UserCheck size={16}/></IconButton></div>)}{friends.length === 0 && <small>{tr('noFriendsYet')}</small>}</section>
+      </Card>
+    </div>
+  </>
+}
 
 function Chat({ tr, messages, draft, setDraft, onSend }: { tr: Tr; messages: MessageRow[]; draft: string; setDraft: (v: string) => void; onSend: () => void }) { return <><PageHeading eyebrow={tr('chatEyebrow')} title={tr('chat')} subtitle={tr('chatSubtitle')}/><Card className="chat-layout"><div className="chat-window"><div className="chat-history">{messages.length ? messages.map((message) => <div key={message.id} className="bubble sent">{message.body}<small>{new Date(message.created_at).toLocaleString()}</small></div>) : <p className="empty-state">{tr('noNotes')}</p>}</div><form className="chat-compose" onSubmit={(e) => { e.preventDefault(); onSend() }}><input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={tr('privateNote')}/><button className="send-button" aria-label={tr('send')} disabled={!draft.trim()}><Send size={17}/></button></form></div></Card></> }
 
@@ -388,10 +444,11 @@ function HistoryPage({ tr, search, setSearch, year, setYear, rows }: { tr: Tr; s
 }
 function Forecast({ tr }: { tr: Tr; period: string; setPeriod: (v: string) => void }) { return <><PageHeading eyebrow={tr('forecastEyebrow')} title={tr('forecast')} subtitle={tr('forecastSubtitle')}/><Card className="extended-forecast"><CardHeader eyebrow={tr('dailyForecast')} title={tr('upcomingForecast')}/><p className="empty-state">{tr('noForecastValues')}</p></Card></> }
 
-function Profile({ tr, lang, name, events, eventModalOpen, eventType, eventDate, eventNote, eventFiles, setEventType, setEventDate, setEventNote, setEventFiles, setEventModalOpen, onOpenEvent, onCloseEvent, onSaveEvent, onDeleteEvent }: {
+function Profile({ tr, lang, name, userId, events, eventModalOpen, eventType, eventDate, eventNote, eventFiles, setEventType, setEventDate, setEventNote, setEventFiles, setEventModalOpen, onOpenEvent, onCloseEvent, onSaveEvent, onDeleteEvent }: {
   tr: Tr
   lang: Language
   name: string
+  userId: string
   events: UserEvent[]
   eventModalOpen: boolean
   eventType: string
@@ -405,29 +462,39 @@ function Profile({ tr, lang, name, events, eventModalOpen, eventType, eventDate,
   setEventModalOpen: (value: boolean) => void
   onOpenEvent: () => void
   onCloseEvent: () => void
-  onSaveEvent: (event: { id?: string; type: string; date: string; startAt: string; endAt: string; note: string; attachments: File[]; catches: EventCatchInput[] }) => void
+  onSaveEvent: (event: { id?: string; type: string; date: string; startAt: string; endAt: string; note: string; tags: string[]; sharedUserIds: string[]; attachments: File[]; catches: EventCatchInput[] }) => void
   onDeleteEvent: (eventId: string) => void
 }) {
   const [fishSpecies, setFishSpecies] = useState<FishSpeciesRow[]>([])
+  const [friends, setFriends] = useState<FriendProfileRow[]>([])
   const [eventStartAt, setEventStartAt] = useState('')
   const [eventEndAt, setEventEndAt] = useState('')
   const [eventCatches, setEventCatches] = useState<CatchDraft[]>([])
+  const [eventTags, setEventTags] = useState<string[]>([])
+  const [tagDraft, setTagDraft] = useState('')
+  const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>([])
+  const [eventSearch, setEventSearch] = useState('')
   const [editingEventId, setEditingEventId] = useState<string | null>(null)
   const [deleteCandidate, setDeleteCandidate] = useState<UserEvent | null>(null)
   const [catchLocationError, setCatchLocationError] = useState('')
   const [speciesLoadError, setSpeciesLoadError] = useState('')
-  useEffect(() => { getFishSpecies().then(setFishSpecies).catch((cause: Error) => setSpeciesLoadError(cause.message)) }, [])
+  useEffect(() => {
+    getFishSpecies().then(setFishSpecies).catch((cause: Error) => setSpeciesLoadError(cause.message))
+    getAcceptedFriends(userId).then(setFriends).catch(() => setFriends([]))
+  }, [userId])
   const isFishingTrip = eventType === 'Fishing trip' || eventType === 'Uscita di pesca'
   const updateCatch = (key: string, values: Partial<CatchDraft>) => setEventCatches((current) => current.map((item) => item.key === key ? { ...item, ...values } : item))
   useEffect(() => {
     if (!eventModalOpen || editingEventId) return
     setEventStartAt(''); setEventEndAt('')
     setEventCatches(isFishingTrip ? [newCatch()] : [])
+    setEventTags([]); setTagDraft(''); setSelectedFriendIds([])
   }, [eventModalOpen, editingEventId])
   const openEditEvent = (event: UserEvent) => {
     setEditingEventId(event.id); setEventType(event.type); setEventDate(event.date); setEventNote(event.note); setEventFiles([])
     setEventStartAt(event.startAt ? localDateTimeInput(event.startAt) : ''); setEventEndAt(event.endAt ? localDateTimeInput(event.endAt) : '')
     setEventCatches(event.catches.map((itemCatch) => ({ key: itemCatch.id, speciesId: String(itemCatch.speciesId), quantity: String(itemCatch.quantity), caughtOn: itemCatch.caughtOn ?? '', caughtTime: itemCatch.caughtTime?.slice(0, 5) ?? '', latitude: itemCatch.latitude == null ? '' : String(itemCatch.latitude), longitude: itemCatch.longitude == null ? '' : String(itemCatch.longitude) })))
+    setEventTags(event.tags); setTagDraft(''); setSelectedFriendIds(event.sharedUserIds.filter((friendId) => friendId !== userId && friends.some((friend) => friend.id === friendId)))
     setEventModalOpen(true)
   }
   const newCatch = (): CatchDraft => ({ key: `${Date.now()}-${Math.random()}`, speciesId: '', quantity: '1', caughtOn: '', caughtTime: '', latitude: '', longitude: '' })
@@ -438,23 +505,33 @@ function Profile({ tr, lang, name, events, eventModalOpen, eventType, eventDate,
       setCatchLocationError('')
     }, () => setCatchLocationError(tr('locationUnavailable')), { enableHighAccuracy: true, maximumAge: 60000, timeout: 10000 })
   }
+  const addTag = () => {
+    const value = tagDraft.trim().replace(/^#/, '').slice(0, 32)
+    if (value && !eventTags.some((tag) => tag.toLocaleLowerCase() === value.toLocaleLowerCase()) && eventTags.length < 20) setEventTags((current) => [...current, value])
+    setTagDraft('')
+  }
+  const visibleEvents = events.filter((event) => `${event.type} ${event.date} ${event.note} ${event.tags.join(' ')} ${event.catches.map((itemCatch) => `${itemCatch.speciesNameIt} ${itemCatch.speciesNameEn}`).join(' ')}`.toLocaleLowerCase().includes(eventSearch.trim().toLocaleLowerCase()))
   return <>
     <PageHeading eyebrow={tr('profileEyebrow')} title={tr('profile')} subtitle={tr('profileSubtitle')} action={<Button variant="secondary"><Settings size={16}/>{tr('settings')}</Button>}/>
     <Card as="div" className="profile-overview"><div className="profile-cover"><div className="cover-pattern"><Waves/></div></div><div className="profile-main"><Avatar initials={name.slice(0, 2).toUpperCase()} tone="me" className="profile-avatar"/><div className="profile-identity"><h2>{name}</h2><span><MapPin size={14}/> {events.length} {tr('savedEventsCount')}</span><p>{tr('yourLagoonProfile')}</p></div></div><div className="profile-stats"><div><strong>{events.length}</strong><span>{tr('savedEvents')}</span></div><div><strong>—</strong><span>{tr('profileFriends')}</span></div><div><strong>—</strong><span>{tr('profileStations')}</span></div><div><strong>—</strong><span>{tr('experiencePoints')}</span></div></div></Card>
     <div className="profile-columns">
       <Card className="event-panel">
         <CardHeader eyebrow={tr('personalJournal')} title={tr('events')} action={<Button variant="primary" onClick={() => { setEditingEventId(null); onOpenEvent() }}><Plus size={15}/>{tr('addEvent')}</Button>}/>
-        <div className="event-list">{events.map((event) => <div key={event.id}><span className="event-dot"><Fish size={15}/></span><span><strong>{eventTypeLabel(event.type, tr)} · {new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${event.date}T00:00:00`))}</strong>{(event.startAt || event.endAt) && <small>{event.startAt ? new Date(event.startAt).toLocaleTimeString(lang === 'it' ? 'it-IT' : 'en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}–{event.endAt ? new Date(event.endAt).toLocaleTimeString(lang === 'it' ? 'it-IT' : 'en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}</small>}{event.catches.map((itemCatch) => <small key={itemCatch.id}>{itemCatch.quantity} × {lang === 'it' ? itemCatch.speciesNameIt : itemCatch.speciesNameEn}{itemCatch.caughtOn ? ` · ${new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB').format(new Date(`${itemCatch.caughtOn}T00:00:00`))}` : ''}{itemCatch.caughtTime ? ` ${itemCatch.caughtTime.slice(0, 5)}` : ''}{itemCatch.latitude != null && itemCatch.longitude != null ? ` · ${itemCatch.latitude.toFixed(4)}, ${itemCatch.longitude.toFixed(4)}` : ''}</small>)}{event.note && <small>{event.note}</small>}<small>{tr('privateInLagoon')}</small>{event.attachments.length > 0 && <small className="event-attachments"><Paperclip size={12}/>{event.attachments.map((file) => file.file_name).join(', ')}</small>}</span><div className="event-actions"><IconButton label={`${tr('editEvent')}: ${eventTypeLabel(event.type, tr)}`} onClick={() => openEditEvent(event)}><Pencil size={15}/></IconButton><IconButton label={`${tr('deleteEvent')}: ${eventTypeLabel(event.type, tr)}`} onClick={() => setDeleteCandidate(event)}><Trash2 size={15}/></IconButton></div></div>)}</div>
+        <Field label={tr('searchEvents')} className="event-search"><input className="ds-field__control" value={eventSearch} onChange={(event) => setEventSearch(event.target.value)} placeholder={tr('searchEvents')}/></Field>
+        <div className="event-list">{visibleEvents.map((event) => <div key={event.id}><span className={`event-dot ${event.isShared ? 'event-dot--shared' : ''}`}><Fish size={15}/></span><span><strong>{eventTypeLabel(event.type, tr)} · {new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${event.date}T00:00:00`))}</strong>{(event.startAt || event.endAt) && <small>{event.startAt ? new Date(event.startAt).toLocaleTimeString(lang === 'it' ? 'it-IT' : 'en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}–{event.endAt ? new Date(event.endAt).toLocaleTimeString(lang === 'it' ? 'it-IT' : 'en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}</small>}{event.catches.map((itemCatch) => <small key={itemCatch.id}>{itemCatch.quantity} × {lang === 'it' ? itemCatch.speciesNameIt : itemCatch.speciesNameEn}{itemCatch.caughtOn ? ` · ${new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB').format(new Date(`${itemCatch.caughtOn}T00:00:00`))}` : ''}{itemCatch.caughtTime ? ` ${itemCatch.caughtTime.slice(0, 5)}` : ''}{itemCatch.latitude != null && itemCatch.longitude != null ? ` · ${itemCatch.latitude.toFixed(4)}, ${itemCatch.longitude.toFixed(4)}` : ''}</small>)}{event.tags.length > 0 && <small className="event-tags">{event.tags.map((tag) => <span key={tag}>#{tag}</span>)}</small>}{event.note && <small>{event.note}</small>}<small>{event.isShared ? tr('sharedEvent') : event.sharedUserIds.length ? `${tr('shareEvent')}: ${event.sharedUserIds.length}` : tr('privateInLagoon')}</small>{event.attachments.length > 0 && <small className="event-attachments"><Paperclip size={12}/>{event.attachments.map((file) => file.file_name).join(', ')}</small>}</span>{!event.isShared && <div className="event-actions"><IconButton label={`${tr('editEvent')}: ${eventTypeLabel(event.type, tr)}`} onClick={() => openEditEvent(event)}><Pencil size={15}/></IconButton><IconButton label={`${tr('deleteEvent')}: ${eventTypeLabel(event.type, tr)}`} onClick={() => setDeleteCandidate(event)}><Trash2 size={15}/></IconButton></div>}</div>)}{visibleEvents.length === 0 && <p className="empty-state">{tr('noMatchingEvents')}</p>}</div>
       </Card>
       <Card className="badges-panel"><CardHeader eyebrow={tr('contributions')} title={tr('community')}/><p className="empty-state">{tr('noAchievements')}</p></Card>
     </div>
 
     {eventModalOpen && <Dialog eyebrow={tr('personalJournal')} title={tr(editingEventId ? 'editEvent' : 'addEventTitle')} description={tr('addEventDescription')} closeLabel={tr('close')} onClose={onCloseEvent}>
-      <form onSubmit={(e) => { e.preventDefault(); onSaveEvent({ id: editingEventId ?? undefined, type: eventType, date: eventDate, startAt: eventStartAt, endAt: eventEndAt, note: eventNote.trim(), attachments: eventFiles, catches: isFishingTrip ? eventCatches.filter((item) => item.speciesId).map((item) => ({ species_id: Number(item.speciesId), quantity: Number(item.quantity), caught_on: item.caughtOn || null, caught_time: item.caughtTime || null, latitude: item.latitude === '' ? null : Number(item.latitude), longitude: item.longitude === '' ? null : Number(item.longitude) })) : [] }) }}>
+      <form onSubmit={(e) => { e.preventDefault(); const finalTags = tagDraft.trim() ? [...eventTags, tagDraft.trim().replace(/^#/, '').slice(0, 32)] : eventTags; onSaveEvent({ id: editingEventId ?? undefined, type: eventType, date: eventDate, startAt: eventStartAt, endAt: eventEndAt, note: eventNote.trim(), tags: [...new Map(finalTags.filter(Boolean).map((tag) => [tag.toLocaleLowerCase(), tag])).values()].slice(0, 20), sharedUserIds: selectedFriendIds, attachments: eventFiles, catches: isFishingTrip ? eventCatches.filter((item) => item.speciesId).map((item) => ({ species_id: Number(item.speciesId), quantity: Number(item.quantity), caught_on: item.caughtOn || null, caught_time: item.caughtTime || null, latitude: item.latitude === '' ? null : Number(item.latitude), longitude: item.longitude === '' ? null : Number(item.longitude) })) : [] }) }}>
         <div className="ds-field-grid">
           <Field label={tr('eventType')}><select className="ds-field__control" value={eventType} onChange={(e) => { setEventType(e.target.value); if (e.target.value !== 'Fishing trip') setEventCatches([]); else if (!eventCatches.length) setEventCatches([newCatch()]) }}><option value="Fishing trip">{tr('catch')}</option><option value="Measurement">{tr('measurement')}</option><option value="Note">{tr('note')}</option></select></Field>
           <Field label={tr('date')}><input className="ds-field__control" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} required/></Field>
         </div>
+        <Field label={tr('tags')} className="ds-field--spaced"><input className="ds-field__control" value={tagDraft} onChange={(e) => setTagDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addTag() } }} onBlur={() => { if (tagDraft.trim()) addTag() }} placeholder={tr('addTagPlaceholder')}/></Field>
+        {eventTags.length > 0 && <div className="event-tag-editor">{eventTags.map((tag) => <span className="event-tag-chip" key={tag}>#{tag}<IconButton label={`${tr('removeTag')}: ${tag}`} onClick={() => setEventTags((current) => current.filter((item) => item !== tag))}><X size={12}/></IconButton></span>)}</div>}
+        <fieldset className="event-friend-picker"><legend>{tr('shareEvent')}</legend><p>{tr('shareEventHint')}</p>{friends.length ? friends.map((friend) => <label key={friend.id}><input type="checkbox" checked={selectedFriendIds.includes(friend.id)} onChange={(e) => setSelectedFriendIds((current) => e.target.checked ? [...current, friend.id] : current.filter((id) => id !== friend.id))}/><span>{friend.display_name || friend.id}</span></label>) : <small>{tr('noFriendsAvailable')}</small>}</fieldset>
         {isFishingTrip && <section className="fishing-event-fields" aria-label={tr('fishCaught')}>
           <div className="ds-field-grid"><Field label={tr('startTime')}><input className="ds-field__control" type="datetime-local" value={eventStartAt} onChange={(e) => setEventStartAt(e.target.value)}/></Field><Field label={tr('endTime')}><input className="ds-field__control" type="datetime-local" min={eventStartAt || undefined} value={eventEndAt} onChange={(e) => setEventEndAt(e.target.value)}/></Field></div>
           <div className="catch-fields-heading"><strong>{tr('fishCaught')}</strong><Button type="button" variant="secondary" onClick={() => setEventCatches((current) => [...current, newCatch()])}><Plus size={14}/>{tr('addFish')}</Button></div>

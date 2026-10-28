@@ -5,13 +5,14 @@ Lagoon uses Supabase for hosted Postgres, authentication, and private file stora
 ## Create the backend
 
 1. Create a project at [supabase.com/dashboard](https://supabase.com/dashboard). Choose a database password and a region near your users.
-2. Open **SQL Editor → New query** and run the migration files in order: `20261028000000_lagoon_backend.sql`, `20261028000100_lagoon_weather_observations.sql`, `20261028000200_fishing_event_catches.sql`, then `20261028000300_catch_time_and_position.sql`. If the backend is already set up through the previous fishing-event migration, run only `20261028000300_catch_time_and_position.sql`. It adds optional catch time and coordinates. Event edit/delete and catch edits use the existing owner-scoped RLS policies.
+2. Open **SQL Editor → New query** and run the migration files in order: `20261028000000_lagoon_backend.sql`, `20261028000100_lagoon_weather_observations.sql`, `20261028000200_fishing_event_catches.sql`, `20261028000300_catch_time_and_position.sql`, `20261028000400_event_sharing_and_tags.sql`, then `20261028000500_friends_and_feed_media.sql`. If your project has already run the first five migrations, run only the new friends/feed migration. It adds friend requests, limits event sharing to accepted friends, and provisions a private media bucket for feed photos and videos.
 3. Open **Project Settings → API**. Copy the Project URL and the publishable key (or legacy `anon` key). Do not put the `service_role` or secret key in the frontend.
 4. Copy `.env.example` to `.env.local` and fill in:
 
    ```env
    VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
    VITE_SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY
+   VITE_SITE_URL=https://lagoon-liart.vercel.app/
    ```
 
 5. In **Authentication → Providers → Email**, leave email/password enabled. Configure SMTP before inviting real users. For a quick private prototype you can turn off email confirmation; turn it back on and configure SMTP before public launch.
@@ -45,20 +46,26 @@ Instagram is not one of Supabase's built-in providers. The button uses Supabase'
 2. In Supabase **Authentication → Sign In / Providers → New Provider**, choose manual OAuth2 configuration and use the identifier `custom:instagram`. The Instagram Login endpoints are `https://www.instagram.com/oauth/authorize`, `https://api.instagram.com/oauth/access_token`, and `https://graph.instagram.com/me?fields=user_id,username`; request the `instagram_business_basic` scope. Use the callback URL Supabase displays as the redirect URI in the Meta app. Meta documents Instagram Login for professional accounts [here](https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api).
 3. Allow sign-in without an email for this provider: Instagram Login does not provide an email address. If the Meta login form offers the Facebook login option, disable it for an Instagram-only flow. Enable the provider.
 
-Social sign-in redirects back to the app URL. Add `http://localhost:5173/**` to **Authentication → URL Configuration → Redirect URLs**. When the site is deployed, add its production URL there too. Supabase documents that the app redirect must be on this allow list: [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls).
+Social sign-in builds `redirect_to` from `VITE_SITE_URL` first, then `VITE_VERCEL_URL`, then the browser's current origin. Set the first two in Vercel under **Project → Settings → Environment Variables** (the `VITE_` prefix is required by Vite; `NEXT_PUBLIC_*` is a Next.js convention). For this project, set `VITE_SITE_URL` to `https://lagoon-liart.vercel.app/`. Supabase only accepts the destination if it is allowlisted; otherwise it can fall back to the configured **Site URL**, which commonly remains `http://localhost:5173` from local development. Configure **Authentication → URL Configuration** as follows:
+
+1. Set **Site URL** to your deployed production URL, for example `https://your-project.vercel.app` (or your custom domain). Do not leave it set to localhost.
+2. Add `http://localhost:5173/**` and the exact production URL with `/**`, for example `https://your-project.vercel.app/**`, under **Redirect URLs**.
+3. If you use Vercel preview deployments, set `VITE_VERCEL_URL` for the Preview environment to the deployment hostname (without protocol, for example `lagoon-liart.vercel.app`) and add the matching preview pattern, such as `https://*-<team-or-account-slug>.vercel.app/**`. Use the wildcard format that matches your actual Vercel hostnames.
+
+The Google **Authorized redirect URI** is a separate setting: it must remain the Supabase callback URL shown under **Authentication → Providers → Google**. Google returns to Supabase first; Supabase then redirects to the app URL above. Supabase requires app redirect destinations to match its Redirect URLs allowlist and recommends an exact production Site URL. See [Supabase Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls).
 
 ## Publish the frontend
 
 1. Push this project to a Git provider, or upload it to a static host that supports Vite builds.
 2. In Vercel, choose **Add New → Project**, import the repository, and use the defaults (`npm run build`, output directory `dist`). Netlify can use the same build command and output directory.
-3. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in the host's project environment settings for Production (and Preview if desired), then deploy.
-4. In Supabase **Authentication → URL Configuration**, set the deployed site URL and add the local and production URLs to the redirect allow list.
+3. Add `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, and `VITE_SITE_URL=https://lagoon-liart.vercel.app/` in Vercel's Production environment settings. Set `VITE_VERCEL_URL` in Preview if using preview deployments, then redeploy so Vite includes the values in the client bundle.
+4. In Supabase **Authentication → URL Configuration**, set **Site URL** to the deployed site and allowlist the local and production URLs (plus the Vercel preview pattern, if used) as described above.
 
 ## What is connected
 
 - Account sign-up/sign-in and session renewal.
 - Private event journal with editable/deletable events, optional trip times, and file uploads. Fishing trips can include multiple fish species, quantities, optional catch date/time, and optional coordinates (entered manually or captured with browser geolocation).
-- Community text posts.
+- Community feed posts with photo/video uploads, plus user search and mutual friend requests.
 - Private saved notes in the chat area. Direct user-to-user messaging is not implemented yet.
 - Daily sunrise and sunset from Open-Meteo, using the browser's saved location. If location permission is declined on first use, Venice is selected; users can change the city from the active-location control. The app requests the API timezone automatically and links to Open-Meteo for attribution.
 

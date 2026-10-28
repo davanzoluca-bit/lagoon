@@ -1,10 +1,14 @@
 export type Session = { access_token: string; refresh_token: string; expires_at?: number; user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }
 export type FishSpeciesRow = { id: number; slug: string; name_it: string; name_en: string }
+export type FriendProfileRow = { id: string; display_name: string }
+export type FriendConnectionRow = { id: string; user_id: string; friend_id: string; status: 'pending' | 'accepted'; created_at: string }
+export type FriendConnection = FriendConnectionRow & { incoming: boolean; profile: FriendProfileRow }
 export type EventCatchInput = { species_id: number; quantity: number; caught_on: string | null; caught_time: string | null; latitude: number | null; longitude: number | null }
 export type EventCatchRow = EventCatchInput & { id: string; fish_species?: FishSpeciesRow | null }
 export type EventAttachmentRow = { file_name: string; object_path: string; content_type: string }
-export type EventRow = { id: string; event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string; created_at: string; event_attachments?: EventAttachmentRow[]; event_catches?: EventCatchRow[] }
-export type PostRow = { id: string; body: string; created_at: string; author_id: string }
+export type EventRow = { id: string; owner_id: string; event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string; tags: string[]; created_at: string; event_participants?: { user_id: string }[]; event_attachments?: EventAttachmentRow[]; event_catches?: EventCatchRow[] }
+export type PostAttachmentRow = { file_name: string; object_path: string; content_type: string }
+export type PostRow = { id: string; body: string; created_at: string; author_id: string; post_attachments?: PostAttachmentRow[] }
 export type MessageRow = { id: string; body: string; created_at: string; sender_id: string }
 export type WeatherStationRow = { id: string; slug: string; name: string; area: string; source_url: string; source_license: string; source_time_basis: string; vertical_datum: string }
 export type WeatherObservationRow = { recorded_at: string; tide_level_m: number | null; water_temp_c: number | null }
@@ -29,6 +33,13 @@ export async function signIn(email: string, password: string) { const session = 
 export async function signUp(email: string, password: string, displayName: string) { const session = await authRequest('signup', { email, password, data: { display_name: displayName } }); if (session.access_token) saveSession(session); return session }
 export function signOut() { saveSession(null) }
 function base64Url(bytes: Uint8Array) { let binary = ''; bytes.forEach((value) => { binary += String.fromCharCode(value) }); return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') }
+export function getOAuthRedirectUrl(origin: string, siteUrl?: string, vercelUrl?: string) {
+  let target = siteUrl?.trim() || vercelUrl?.trim() || origin
+  if (!target.startsWith('http://') && !target.startsWith('https://')) {
+    target = `${target === 'localhost' || target.startsWith('localhost:') ? 'http' : 'https'}://${target}`
+  }
+  return new URL('/', target).toString()
+}
 export async function signInWithProvider(provider: 'google' | 'custom:instagram') {
   if (!url || !key) throw new Error('Backend is not configured.')
   const verifier = base64Url(crypto.getRandomValues(new Uint8Array(64)))
@@ -36,7 +47,7 @@ export async function signInWithProvider(provider: 'google' | 'custom:instagram'
   sessionStorage.setItem('lagoon.supabase.oauth-verifier', verifier)
   // A top-level browser navigation cannot set request headers, so Supabase's
   // authorize endpoint needs the publishable key as a query parameter.
-  const params = new URLSearchParams({ apikey: key, provider, redirect_to: `${window.location.origin}${window.location.pathname}`, code_challenge: challenge, code_challenge_method: 's256' })
+  const params = new URLSearchParams({ apikey: key, provider, redirect_to: getOAuthRedirectUrl(window.location.origin, import.meta.env.VITE_SITE_URL, import.meta.env.VITE_VERCEL_URL), code_challenge: challenge, code_challenge_method: 's256' })
   window.location.assign(`${url}/auth/v1/authorize?${params.toString()}`)
 }
 export async function exchangeOAuthCode(code: string) {
@@ -66,13 +77,36 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await response.text()
   return body ? JSON.parse(body) as T : undefined as T
 }
-export const getEvents = () => request<EventRow[]>('events?select=*,event_attachments(file_name,object_path,content_type),event_catches(id,species_id,quantity,caught_on,caught_time,latitude,longitude,fish_species(id,slug,name_it,name_en))&order=event_date.desc,created_at.desc')
+export const getEvents = () => request<EventRow[]>('events?select=*,event_participants(user_id),event_attachments(file_name,object_path,content_type),event_catches(id,species_id,quantity,caught_on,caught_time,latitude,longitude,fish_species(id,slug,name_it,name_en))&order=event_date.desc,created_at.desc')
 export const getFishSpecies = () => request<FishSpeciesRow[]>('fish_species?select=id,slug,name_it,name_en&is_active=eq.true&order=name_it.asc')
-export async function getEventAttachmentUrl(objectPath: string, downloadName?: string) {
+export async function searchUsers(userId: string, query: string) {
+  if (!query.trim()) return []
+  const params = new URLSearchParams({ select: 'id,display_name', id: `neq.${userId}`, display_name: `ilike.*${query.trim().replace(/[%_,]/g, '')}*`, limit: '20', order: 'display_name.asc' })
+  return request<FriendProfileRow[]>(`profiles?${params.toString()}`)
+}
+export async function getFriendConnections(userId: string) {
+  const params = new URLSearchParams({ select: 'id,user_id,friend_id,status,created_at', or: `(user_id.eq.${userId},friend_id.eq.${userId})`, order: 'created_at.desc' })
+  const connections = await request<FriendConnectionRow[]>(`friendships?${params.toString()}`)
+  const profileIds = [...new Set(connections.map((row) => row.user_id === userId ? row.friend_id : row.user_id))]
+  if (!profileIds.length) return []
+  const profiles = await request<FriendProfileRow[]>(`profiles?select=id,display_name&id=in.(${profileIds.map(encodeURIComponent).join(',')})`)
+  const profilesById = new Map(profiles.map((profile) => [profile.id, profile]))
+  return connections.map((row) => {
+    const friendId = row.user_id === userId ? row.friend_id : row.user_id
+    return { ...row, incoming: row.friend_id === userId, profile: profilesById.get(friendId) ?? { id: friendId, display_name: '' } }
+  })
+}
+export async function getAcceptedFriends(userId: string) {
+  return (await getFriendConnections(userId)).filter((connection) => connection.status === 'accepted').map(({ profile }) => profile)
+}
+export const sendFriendRequest = (friendId: string) => request('friendships', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ friend_id: friendId }) })
+export const acceptFriendRequest = (requestId: string) => request(`friendships?id=eq.${requestId}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'accepted', accepted_at: new Date().toISOString() }) })
+export const removeFriendConnection = (connectionId: string) => request(`friendships?id=eq.${connectionId}`, { method: 'DELETE' })
+async function getStorageObjectUrl(bucket: string, objectPath: string, downloadName?: string) {
   if (!url || !key) throw new Error('Backend is not configured.')
   const session = await validSession()
   const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/')
-  const response = await fetch(`${url}/storage/v1/object/sign/lagoon-attachments/${encodedPath}`, {
+  const response = await fetch(`${url}/storage/v1/object/sign/${bucket}/${encodedPath}`, {
     method: 'POST', headers: { apikey: key, Authorization: `Bearer ${session?.access_token ?? key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ expiresIn: 3600 }),
   })
@@ -82,9 +116,13 @@ export async function getEventAttachmentUrl(objectPath: string, downloadName?: s
   if (downloadName) signed.searchParams.set('download', downloadName)
   return signed.toString()
 }
-export async function createEvent(event: { event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string }, catches: EventCatchInput[], files: File[]) {
+export const getEventAttachmentUrl = (objectPath: string, downloadName?: string) => getStorageObjectUrl('lagoon-attachments', objectPath, downloadName)
+export const getPostMediaUrl = (objectPath: string) => getStorageObjectUrl('lagoon-feed-media', objectPath)
+export type EventWrite = { event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string; tags: string[] }
+export async function createEvent(event: EventWrite, catches: EventCatchInput[], sharedUserIds: string[], files: File[]) {
   const [created] = await request<EventRow[]>('events?select=*', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(event) })
   await saveEventCatches(created.id, catches)
+  await saveEventParticipants(created.id, sharedUserIds)
   await uploadEventFiles(created.id, files)
   return created
 }
@@ -102,9 +140,18 @@ async function uploadEventFiles(eventId: string, files: File[]) {
     await request('event_attachments', { method: 'POST', body: JSON.stringify({ event_id: eventId, file_name: file.name, object_path: objectPath, content_type: file.type, size_bytes: file.size }) })
   }
 }
-export async function updateEvent(eventId: string, event: { event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string }, catches: EventCatchInput[], files: File[]) {
+async function saveEventParticipants(eventId: string, userIds: string[]) {
+  const current = await request<{ user_id: string }[]>(`event_participants?select=user_id&event_id=eq.${eventId}`)
+  const currentIds = current.map((participant) => participant.user_id)
+  const removedIds = currentIds.filter((userId) => !userIds.includes(userId))
+  const addedIds = userIds.filter((userId) => !currentIds.includes(userId))
+  if (removedIds.length) await request(`event_participants?event_id=eq.${eventId}&user_id=in.(${removedIds.map(encodeURIComponent).join(',')})`, { method: 'DELETE' })
+  if (addedIds.length) await request('event_participants', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(addedIds.map((userId) => ({ event_id: eventId, user_id: userId }))) })
+}
+export async function updateEvent(eventId: string, event: EventWrite, catches: EventCatchInput[], sharedUserIds: string[], files: File[]) {
   await request(`events?id=eq.${eventId}`, { method: 'PATCH', body: JSON.stringify(event) })
   await saveEventCatches(eventId, catches)
+  await saveEventParticipants(eventId, sharedUserIds)
   await uploadEventFiles(eventId, files)
 }
 export async function deleteEvent(eventId: string) {
@@ -117,8 +164,21 @@ export async function deleteEvent(eventId: string) {
   }
   await request(`events?id=eq.${eventId}`, { method: 'DELETE' })
 }
-export const getPosts = () => request<PostRow[]>('posts?select=*&order=created_at.desc&limit=50')
-export const createPost = (body: string) => request('posts', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ body }) })
+export const getPosts = () => request<PostRow[]>('posts?select=*,post_attachments(file_name,object_path,content_type)&order=created_at.desc&limit=50')
+export async function createPost(body: string, files: File[] = []) {
+  const [created] = await request<PostRow[]>('posts?select=*', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ body }) })
+  for (const file of files) {
+    if (!(file.type.startsWith('image/') || file.type.startsWith('video/'))) throw new Error('Only image and video files can be attached to a post.')
+    if (file.size > 50 * 1024 * 1024) throw new Error(`${file.name} is larger than the 50 MB upload limit.`)
+    const session = await validSession()
+    const objectPath = `${session?.user.id}/${created.id}/${crypto.randomUUID()}-${file.name}`
+    const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/')
+    const upload = await fetch(`${url}/storage/v1/object/lagoon-feed-media/${encodedPath}`, { method: 'POST', headers: { apikey: key!, Authorization: `Bearer ${session?.access_token}`, 'Content-Type': file.type, 'x-upsert': 'false' }, body: file })
+    if (!upload.ok) throw new Error(`Could not upload ${file.name}.`)
+    await request('post_attachments', { method: 'POST', body: JSON.stringify({ post_id: created.id, file_name: file.name, object_path: objectPath, content_type: file.type, size_bytes: file.size }) })
+  }
+  return created
+}
 export const getMessages = () => request<MessageRow[]>('messages?select=*&order=created_at.asc&limit=200')
 export const createMessage = (body: string) => request('messages', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ body }) })
 export async function getWeatherStation() {

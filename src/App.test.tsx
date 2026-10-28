@@ -5,6 +5,14 @@ import App from './App'
 const backend = vi.hoisted(() => ({
   getEvents: vi.fn(),
   getFishSpecies: vi.fn(),
+  getAcceptedFriends: vi.fn(),
+  getFriendConnections: vi.fn(),
+  searchUsers: vi.fn(),
+  sendFriendRequest: vi.fn(),
+  acceptFriendRequest: vi.fn(),
+  removeFriendConnection: vi.fn(),
+  createPost: vi.fn(),
+  getPostMediaUrl: vi.fn(),
   getEventAttachmentUrl: vi.fn(),
   createEvent: vi.fn(),
   updateEvent: vi.fn(),
@@ -23,6 +31,13 @@ vi.mock('./backend/supabase', () => ({
   readSession: () => backend.session,
   getEvents: backend.getEvents,
   getFishSpecies: backend.getFishSpecies,
+  getAcceptedFriends: backend.getAcceptedFriends,
+  getFriendConnections: backend.getFriendConnections,
+  searchUsers: backend.searchUsers,
+  sendFriendRequest: backend.sendFriendRequest,
+  acceptFriendRequest: backend.acceptFriendRequest,
+  removeFriendConnection: backend.removeFriendConnection,
+  getPostMediaUrl: backend.getPostMediaUrl,
   getEventAttachmentUrl: backend.getEventAttachmentUrl,
   getMessages: backend.getMessages,
   getPosts: backend.getPosts,
@@ -32,7 +47,7 @@ vi.mock('./backend/supabase', () => ({
   updateEvent: backend.updateEvent,
   deleteEvent: backend.deleteEvent,
   createMessage: vi.fn(),
-  createPost: vi.fn(),
+  createPost: backend.createPost,
   exchangeOAuthCode: vi.fn(),
   signIn: vi.fn(),
   signInWithProvider: vi.fn(),
@@ -48,6 +63,14 @@ describe('dashboard weather readings', () => {
     localStorage.removeItem('lagoon.user-location')
     backend.getEvents.mockResolvedValue([])
     backend.getFishSpecies.mockResolvedValue([{ id: 1, slug: 'branzino', name_it: 'Branzino (spigola)', name_en: 'European seabass' }])
+    backend.getAcceptedFriends.mockResolvedValue([])
+    backend.getFriendConnections.mockResolvedValue([])
+    backend.searchUsers.mockResolvedValue([])
+    backend.sendFriendRequest.mockResolvedValue(undefined)
+    backend.acceptFriendRequest.mockResolvedValue(undefined)
+    backend.removeFriendConnection.mockResolvedValue(undefined)
+    backend.createPost.mockResolvedValue({ id: 'post-1' })
+    backend.getPostMediaUrl.mockImplementation((path: string) => Promise.resolve(`https://media.example/${path}`))
     backend.getEventAttachmentUrl.mockImplementation((path: string, downloadName?: string) => Promise.resolve(`https://storage.example/${encodeURIComponent(path)}${downloadName ? `?download=${encodeURIComponent(downloadName)}` : ''}`))
     backend.createEvent.mockResolvedValue({ id: 'new-event' })
     backend.updateEvent.mockResolvedValue(undefined)
@@ -118,7 +141,7 @@ describe('dashboard weather readings', () => {
       { recorded_at: '2026-10-28T11:00:00', tide_level_m: 0.75, water_temp_c: 22.4 },
     ])
     backend.getEvents.mockResolvedValue([{
-      id: 'event-1', event_type: 'Fishing trip', event_date: '2026-10-28', note: 'Caught a sea bass',
+      id: 'event-1', owner_id: 'test-user', event_type: 'Fishing trip', event_date: '2026-10-28', note: 'Caught a sea bass', tags: [], event_participants: [],
       event_attachments: [{ file_name: 'catch.jpg', object_path: 'test-user/event-1/catch.jpg', content_type: 'image/jpeg' }, { file_name: 'track.gpx', object_path: 'test-user/event-1/track.gpx', content_type: 'application/gpx+xml' }],
     }])
     render(<App />)
@@ -172,13 +195,82 @@ describe('dashboard weather readings', () => {
       event_type: 'Fishing trip',
       start_at: new Date('2026-10-28T08:30').toISOString(),
       end_at: new Date('2026-10-28T11:45').toISOString(),
-    }), [{ species_id: 1, quantity: 2, caught_on: '2026-10-28', caught_time: '09:15', latitude: 45.44, longitude: 12.31 }], []))
+    }), [{ species_id: 1, quantity: 2, caught_on: '2026-10-28', caught_time: '09:15', latitude: 45.44, longitude: 12.31 }], [], []))
+  })
+
+  it('saves tags and selected Lagoon members with a fishing event', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.getAcceptedFriends.mockResolvedValue([{ id: 'friend-1', display_name: 'Marta' }])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Il mio profilo' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Registra un evento/ }))
+    await screen.findByRole('option', { name: 'Branzino (spigola)' })
+    fireEvent.change(screen.getByLabelText('Specie'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Tag'), { target: { value: 'alba' } })
+    fireEvent.keyDown(screen.getByLabelText('Tag'), { key: 'Enter' })
+    fireEvent.click(screen.getByLabelText('Marta'))
+    fireEvent.click(screen.getByRole('button', { name: 'Salva evento' }))
+
+    await waitFor(() => expect(backend.createEvent).toHaveBeenCalledWith(expect.objectContaining({ tags: ['alba'] }), expect.any(Array), ['friend-1'], []))
+  })
+
+  it('marks events shared by another Lagoon member with a different chart color', async () => {
+    backend.getWeatherObservations.mockResolvedValue([{ recorded_at: '2026-10-28T12:00:00', tide_level_m: 0.84, water_temp_c: 22.6 }])
+    backend.getEvents.mockResolvedValue([{
+      id: 'shared-event', owner_id: 'friend-1', event_type: 'Fishing trip', event_date: '2026-10-28', start_at: null, end_at: null, note: '', tags: [], created_at: '2026-10-28T12:00:00Z',
+      event_participants: [{ user_id: 'test-user' }], event_attachments: [], event_catches: [],
+    }])
+    render(<App />)
+    fireEvent.click(await screen.findByRole('switch', { name: 'Mostra eventi' }))
+    const marker = await screen.findByRole('button', { name: /Evento condiviso con te/ })
+    expect(marker).toHaveClass('observation-event-marker--shared')
+  })
+
+  it('sends a friend request from the feed directory', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.searchUsers.mockResolvedValue([{ id: 'friend-2', display_name: 'Marta' }])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Feed' }))
+    fireEvent.change(screen.getByLabelText('Cerca persone per nome'), { target: { value: 'Mar' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Aggiungi amico: Marta' }))
+    await waitFor(() => expect(backend.sendFriendRequest).toHaveBeenCalledWith('friend-2'))
+  })
+
+  it('publishes a feed post with an attached photo', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Feed' }))
+    fireEvent.change(screen.getByPlaceholderText('Condividi un aggiornamento'), { target: { value: 'La laguna al tramonto' } })
+    const photo = new File(['photo'], 'tramonto.jpg', { type: 'image/jpeg' })
+    fireEvent.change(document.querySelector('input[type="file"][accept="image/*,video/*"]')!, { target: { files: [photo] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Pubblica' }))
+
+    await waitFor(() => expect(backend.createPost).toHaveBeenCalledWith('La laguna al tramonto', [photo]))
+  })
+
+  it('renders photo and video attachments in feed posts', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.getPosts.mockResolvedValue([{
+      id: 'post-media', body: 'Un aggiornamento', author_id: 'test-user', created_at: '2026-10-28T12:00:00Z',
+      post_attachments: [
+        { file_name: 'laguna.jpg', object_path: 'test-user/post-media/laguna.jpg', content_type: 'image/jpeg' },
+        { file_name: 'uscita.mp4', object_path: 'test-user/post-media/uscita.mp4', content_type: 'video/mp4' },
+      ],
+    }])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Feed' }))
+    expect(await screen.findByAltText('laguna.jpg')).toHaveAttribute('src', 'https://media.example/test-user/post-media/laguna.jpg')
+    expect(await screen.findByLabelText('uscita.mp4')).toHaveAttribute('controls')
   })
 
   it('edits a saved fishing event including each fish time and location', async () => {
     backend.getWeatherObservations.mockResolvedValue([])
     backend.getEvents.mockResolvedValue([{
-      id: 'trip-1', event_type: 'Fishing trip', event_date: '2026-10-23', start_at: '2026-10-23T08:00:00Z', end_at: '2026-10-23T11:00:00Z', note: 'Morning trip', created_at: '2026-10-23T08:00:00Z',
+      id: 'trip-1', owner_id: 'test-user', tags: [], event_participants: [], event_type: 'Fishing trip', event_date: '2026-10-23', start_at: '2026-10-23T08:00:00Z', end_at: '2026-10-23T11:00:00Z', note: 'Morning trip', created_at: '2026-10-23T08:00:00Z',
       event_attachments: [],
       event_catches: [{ id: 'catch-1', species_id: 1, quantity: 2, caught_on: '2026-10-23', caught_time: '09:15:00', latitude: 45.44, longitude: 12.31, fish_species: { id: 1, slug: 'branzino', name_it: 'Branzino (spigola)', name_en: 'European seabass' } }],
     }])
@@ -192,12 +284,12 @@ describe('dashboard weather readings', () => {
     fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Updated trip' } })
     fireEvent.click(screen.getByRole('button', { name: 'Salva evento' }))
 
-    await waitFor(() => expect(backend.updateEvent).toHaveBeenCalledWith('trip-1', expect.objectContaining({ note: 'Updated trip' }), [{ species_id: 1, quantity: 2, caught_on: '2026-10-23', caught_time: '09:15', latitude: 45.44, longitude: 12.31 }], []))
+    await waitFor(() => expect(backend.updateEvent).toHaveBeenCalledWith('trip-1', expect.objectContaining({ note: 'Updated trip', tags: [] }), [{ species_id: 1, quantity: 2, caught_on: '2026-10-23', caught_time: '09:15', latitude: 45.44, longitude: 12.31 }], [], []))
   })
 
   it('asks before deleting an event and then deletes it', async () => {
     backend.getWeatherObservations.mockResolvedValue([])
-    backend.getEvents.mockResolvedValue([{ id: 'trip-delete', event_type: 'Fishing trip', event_date: '2026-10-23', start_at: null, end_at: null, note: '', created_at: '2026-10-23T08:00:00Z', event_attachments: [], event_catches: [] }])
+    backend.getEvents.mockResolvedValue([{ id: 'trip-delete', owner_id: 'test-user', tags: [], event_participants: [], event_type: 'Fishing trip', event_date: '2026-10-23', start_at: null, end_at: null, note: '', created_at: '2026-10-23T08:00:00Z', event_attachments: [], event_catches: [] }])
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Il mio profilo' }))
