@@ -5,7 +5,7 @@ Lagoon uses Supabase for hosted Postgres, authentication, and private file stora
 ## Create the backend
 
 1. Create a project at [supabase.com/dashboard](https://supabase.com/dashboard). Choose a database password and a region near your users.
-2. Open **SQL Editor → New query** and run the migration files in order: `20261028000000_lagoon_backend.sql`, `20261028000100_lagoon_weather_observations.sql`, `20261028000200_fishing_event_catches.sql`, `20261028000300_catch_time_and_position.sql`, `20261028000400_event_sharing_and_tags.sql`, then `20261028000500_friends_and_feed_media.sql`. If your project has already run the first five migrations, run only the new friends/feed migration. It adds friend requests, limits event sharing to accepted friends, and provisions a private media bucket for feed photos and videos.
+2. Open **SQL Editor → New query** and run the migration files in order: `20261028000000_lagoon_backend.sql`, `20261028000100_lagoon_weather_observations.sql`, `20261028000200_fishing_event_catches.sql`, `20261028000300_catch_time_and_position.sql`, `20261028000400_event_sharing_and_tags.sql`, `20261028000500_friends_and_feed_media.sql`, `20261028000600_friendship_sender_default.sql`, then `20261028000700_post_visibility.sql`. If your project already has the previous migrations, run only the new `20261028000700_post_visibility.sql`. It adds public, friends-only, and selected-friends visibility for posts and applies the same access rules to post attachments and media.
 3. Open **Project Settings → API**. Copy the Project URL and the publishable key (or legacy `anon` key). Do not put the `service_role` or secret key in the frontend.
 4. Copy `.env.example` to `.env.local` and fill in:
 

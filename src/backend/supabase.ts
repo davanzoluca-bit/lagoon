@@ -8,7 +8,8 @@ export type EventCatchRow = EventCatchInput & { id: string; fish_species?: FishS
 export type EventAttachmentRow = { file_name: string; object_path: string; content_type: string }
 export type EventRow = { id: string; owner_id: string; event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string; tags: string[]; created_at: string; event_participants?: { user_id: string }[]; event_attachments?: EventAttachmentRow[]; event_catches?: EventCatchRow[] }
 export type PostAttachmentRow = { file_name: string; object_path: string; content_type: string }
-export type PostRow = { id: string; body: string; created_at: string; author_id: string; post_attachments?: PostAttachmentRow[] }
+export type PostVisibility = 'public' | 'friends' | 'selected'
+export type PostRow = { id: string; body: string; created_at: string; author_id: string; visibility: PostVisibility; post_attachments?: PostAttachmentRow[] }
 export type MessageRow = { id: string; body: string; created_at: string; sender_id: string }
 export type WeatherStationRow = { id: string; slug: string; name: string; area: string; source_url: string; source_license: string; source_time_basis: string; vertical_datum: string }
 export type WeatherObservationRow = { recorded_at: string; tide_level_m: number | null; water_temp_c: number | null }
@@ -99,7 +100,7 @@ export async function getFriendConnections(userId: string) {
 export async function getAcceptedFriends(userId: string) {
   return (await getFriendConnections(userId)).filter((connection) => connection.status === 'accepted').map(({ profile }) => profile)
 }
-export const sendFriendRequest = (friendId: string) => request('friendships', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ friend_id: friendId }) })
+export const sendFriendRequest = (userId: string, friendId: string) => request('friendships', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ user_id: userId, friend_id: friendId }) })
 export const acceptFriendRequest = (requestId: string) => request(`friendships?id=eq.${requestId}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ status: 'accepted', accepted_at: new Date().toISOString() }) })
 export const removeFriendConnection = (connectionId: string) => request(`friendships?id=eq.${connectionId}`, { method: 'DELETE' })
 async function getStorageObjectUrl(bucket: string, objectPath: string, downloadName?: string) {
@@ -165,8 +166,12 @@ export async function deleteEvent(eventId: string) {
   await request(`events?id=eq.${eventId}`, { method: 'DELETE' })
 }
 export const getPosts = () => request<PostRow[]>('posts?select=*,post_attachments(file_name,object_path,content_type)&order=created_at.desc&limit=50')
-export async function createPost(body: string, files: File[] = []) {
-  const [created] = await request<PostRow[]>('posts?select=*', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ body }) })
+export async function createPost(body: string, files: File[] = [], visibility: PostVisibility = 'public', audienceIds: string[] = []) {
+  if (visibility === 'selected' && audienceIds.length === 0) throw new Error('Select at least one friend for this post.')
+  const [created] = await request<PostRow[]>('posts?select=*', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ body, visibility }) })
+  if (visibility === 'selected') {
+    await request('post_audience', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify([...new Set(audienceIds)].map((user_id) => ({ post_id: created.id, user_id }))) })
+  }
   for (const file of files) {
     if (!(file.type.startsWith('image/') || file.type.startsWith('video/'))) throw new Error('Only image and video files can be attached to a post.')
     if (file.size > 50 * 1024 * 1024) throw new Error(`${file.name} is larger than the 50 MB upload limit.`)

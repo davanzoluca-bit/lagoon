@@ -235,7 +235,7 @@ describe('dashboard weather readings', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Feed' }))
     fireEvent.change(screen.getByLabelText('Cerca persone per nome'), { target: { value: 'Mar' } })
     fireEvent.click(await screen.findByRole('button', { name: 'Aggiungi amico: Marta' }))
-    await waitFor(() => expect(backend.sendFriendRequest).toHaveBeenCalledWith('friend-2'))
+    await waitFor(() => expect(backend.sendFriendRequest).toHaveBeenCalledWith('test-user', 'friend-2'))
   })
 
   it('publishes a feed post with an attached photo', async () => {
@@ -248,13 +248,30 @@ describe('dashboard weather readings', () => {
     fireEvent.change(document.querySelector('input[type="file"][accept="image/*,video/*"]')!, { target: { files: [photo] } })
     fireEvent.click(screen.getByRole('button', { name: 'Pubblica' }))
 
-    await waitFor(() => expect(backend.createPost).toHaveBeenCalledWith('La laguna al tramonto', [photo]))
+    await waitFor(() => expect(backend.createPost).toHaveBeenCalledWith('La laguna al tramonto', [photo], 'public', []))
+  })
+
+  it('publishes a post only to selected friends', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.getFriendConnections.mockResolvedValue([{
+      id: 'connection-1', user_id: 'test-user', friend_id: 'friend-1', status: 'accepted', created_at: '2026-10-28T12:00:00Z', incoming: false,
+      profile: { id: 'friend-1', display_name: 'Marta' },
+    }])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Feed' }))
+    fireEvent.change(screen.getByLabelText('Chi può vedere il post?'), { target: { value: 'selected' } })
+    fireEvent.click(await screen.findByLabelText('Marta'))
+    fireEvent.change(screen.getByPlaceholderText('Condividi un aggiornamento'), { target: { value: 'Solo per Marta' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Pubblica' }))
+
+    await waitFor(() => expect(backend.createPost).toHaveBeenCalledWith('Solo per Marta', [], 'selected', ['friend-1']))
   })
 
   it('renders photo and video attachments in feed posts', async () => {
     backend.getWeatherObservations.mockResolvedValue([])
     backend.getPosts.mockResolvedValue([{
-      id: 'post-media', body: 'Un aggiornamento', author_id: 'test-user', created_at: '2026-10-28T12:00:00Z',
+      id: 'post-media', body: 'Un aggiornamento', author_id: 'test-user', visibility: 'public', created_at: '2026-10-28T12:00:00Z',
       post_attachments: [
         { file_name: 'laguna.jpg', object_path: 'test-user/post-media/laguna.jpg', content_type: 'image/jpeg' },
         { file_name: 'uscita.mp4', object_path: 'test-user/post-media/uscita.mp4', content_type: 'video/mp4' },
