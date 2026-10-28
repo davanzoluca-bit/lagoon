@@ -4,6 +4,11 @@ import App from './App'
 
 const backend = vi.hoisted(() => ({
   getEvents: vi.fn(),
+  getFishSpecies: vi.fn(),
+  getEventAttachmentUrl: vi.fn(),
+  createEvent: vi.fn(),
+  updateEvent: vi.fn(),
+  deleteEvent: vi.fn(),
   getMessages: vi.fn(),
   getPosts: vi.fn(),
   getWeatherObservations: vi.fn(),
@@ -17,11 +22,15 @@ vi.mock('./backend/supabase', () => ({
   backendReady: true,
   readSession: () => backend.session,
   getEvents: backend.getEvents,
+  getFishSpecies: backend.getFishSpecies,
+  getEventAttachmentUrl: backend.getEventAttachmentUrl,
   getMessages: backend.getMessages,
   getPosts: backend.getPosts,
   getWeatherObservations: backend.getWeatherObservations,
   getWeatherStation: backend.getWeatherStation,
-  createEvent: vi.fn(),
+  createEvent: backend.createEvent,
+  updateEvent: backend.updateEvent,
+  deleteEvent: backend.deleteEvent,
   createMessage: vi.fn(),
   createPost: vi.fn(),
   exchangeOAuthCode: vi.fn(),
@@ -38,6 +47,11 @@ describe('dashboard weather readings', () => {
     vi.clearAllMocks()
     localStorage.removeItem('lagoon.user-location')
     backend.getEvents.mockResolvedValue([])
+    backend.getFishSpecies.mockResolvedValue([{ id: 1, slug: 'branzino', name_it: 'Branzino (spigola)', name_en: 'European seabass' }])
+    backend.getEventAttachmentUrl.mockImplementation((path: string, downloadName?: string) => Promise.resolve(`https://storage.example/${encodeURIComponent(path)}${downloadName ? `?download=${encodeURIComponent(downloadName)}` : ''}`))
+    backend.createEvent.mockResolvedValue({ id: 'new-event' })
+    backend.updateEvent.mockResolvedValue(undefined)
+    backend.deleteEvent.mockResolvedValue(undefined)
     backend.getMessages.mockResolvedValue([])
     backend.getPosts.mockResolvedValue([])
     backend.getWeatherStation.mockResolvedValue({
@@ -62,7 +76,7 @@ describe('dashboard weather readings', () => {
 
     const { container } = render(<App />)
 
-    await waitFor(() => expect(backend.getWeatherObservations).toHaveBeenCalledWith('590ab8d1-c1f1-4e11-913d-a13fb45ef3d7', 1000))
+    await waitFor(() => expect(backend.getWeatherObservations).toHaveBeenCalledWith('590ab8d1-c1f1-4e11-913d-a13fb45ef3d7', 9000))
     expect(await screen.findByText('07:24')).toBeInTheDocument()
     expect(screen.getByText('17:58')).toBeInTheDocument()
     expect(screen.getByText('Alba')).toBeInTheDocument()
@@ -96,6 +110,101 @@ describe('dashboard weather readings', () => {
     expect(await screen.findByText('Nessuna rilevazione importata')).toBeInTheDocument()
     expect(document.querySelectorAll('.metrics-grid--source .metric-detail')).toHaveLength(4)
     expect(document.querySelector('.metrics-grid--source')).toHaveTextContent('Nessuna lettura importata')
+  })
+
+  it('shows user events on the chart only when enabled and opens their details', async () => {
+    backend.getWeatherObservations.mockResolvedValue([
+      { recorded_at: '2026-10-28T12:00:00', tide_level_m: 0.84, water_temp_c: 22.6 },
+      { recorded_at: '2026-10-28T11:00:00', tide_level_m: 0.75, water_temp_c: 22.4 },
+    ])
+    backend.getEvents.mockResolvedValue([{
+      id: 'event-1', event_type: 'Fishing trip', event_date: '2026-10-28', note: 'Caught a sea bass',
+      event_attachments: [{ file_name: 'catch.jpg', object_path: 'test-user/event-1/catch.jpg', content_type: 'image/jpeg' }, { file_name: 'track.gpx', object_path: 'test-user/event-1/track.gpx', content_type: 'application/gpx+xml' }],
+    }])
+    render(<App />)
+
+    const toggle = await screen.findByRole('switch', { name: 'Mostra eventi' })
+    expect(document.querySelector('.observation-event-marker')).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+
+    expect(await screen.findByRole('button', { name: /Evento: Uscita di pesca/ })).toBeInTheDocument()
+    expect(document.querySelector('.observation-event-marker__icon')).toBeInTheDocument()
+    expect(Number(document.querySelector('.observation-event-marker__dot')?.getAttribute('cy'))).toBeGreaterThan(200)
+    fireEvent.click(await screen.findByRole('button', { name: /Evento: Uscita di pesca/ }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Caught a sea bass')
+    expect(await screen.findByAltText('catch.jpg')).toHaveAttribute('src', 'https://storage.example/test-user%2Fevent-1%2Fcatch.jpg')
+    expect(await screen.findByRole('link', { name: /track.gpx/ })).toHaveAttribute('download', 'track.gpx')
+    expect(backend.getEventAttachmentUrl).toHaveBeenCalledWith('test-user/event-1/track.gpx', 'track.gpx')
+  })
+
+  it('loads older chart rows for the last month than for the last week', async () => {
+    backend.getWeatherObservations.mockResolvedValue([
+      { recorded_at: '2026-10-28T12:00:00', tide_level_m: 0.84, water_temp_c: 22.6 },
+      { recorded_at: '2026-10-08T12:00:00', tide_level_m: 0.62, water_temp_c: 21.8 },
+    ])
+    render(<App />)
+
+    const interval = await screen.findByRole('combobox', { name: 'Intervallo' })
+    fireEvent.change(interval, { target: { value: '30d' } })
+    expect(await screen.findByText('08/10, 12:00')).toBeInTheDocument()
+    fireEvent.change(interval, { target: { value: '7d' } })
+    await waitFor(() => expect(screen.queryByText('08/10, 12:00')).not.toBeInTheDocument())
+  })
+
+  it('saves optional trip times and multiple fish catch fields', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Il mio profilo' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Registra un evento/ }))
+    await screen.findByRole('option', { name: 'Branzino (spigola)' })
+    fireEvent.change(screen.getByLabelText('Inizio (opzionale)'), { target: { value: '2026-10-28T08:30' } })
+    fireEvent.change(screen.getByLabelText('Fine (opzionale)'), { target: { value: '2026-10-28T11:45' } })
+    fireEvent.change(screen.getByLabelText('Specie'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('Quantità'), { target: { value: '2' } })
+    fireEvent.change(screen.getByLabelText('Data di cattura (opzionale)'), { target: { value: '2026-10-28' } })
+    fireEvent.change(screen.getByLabelText('Ora cattura (opzionale)'), { target: { value: '09:15' } })
+    fireEvent.change(screen.getByLabelText('Latitudine'), { target: { value: '45.44' } })
+    fireEvent.change(screen.getByLabelText('Longitudine'), { target: { value: '12.31' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salva evento' }))
+
+    await waitFor(() => expect(backend.createEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: 'Fishing trip',
+      start_at: new Date('2026-10-28T08:30').toISOString(),
+      end_at: new Date('2026-10-28T11:45').toISOString(),
+    }), [{ species_id: 1, quantity: 2, caught_on: '2026-10-28', caught_time: '09:15', latitude: 45.44, longitude: 12.31 }], []))
+  })
+
+  it('edits a saved fishing event including each fish time and location', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.getEvents.mockResolvedValue([{
+      id: 'trip-1', event_type: 'Fishing trip', event_date: '2026-10-23', start_at: '2026-10-23T08:00:00Z', end_at: '2026-10-23T11:00:00Z', note: 'Morning trip', created_at: '2026-10-23T08:00:00Z',
+      event_attachments: [],
+      event_catches: [{ id: 'catch-1', species_id: 1, quantity: 2, caught_on: '2026-10-23', caught_time: '09:15:00', latitude: 45.44, longitude: 12.31, fish_species: { id: 1, slug: 'branzino', name_it: 'Branzino (spigola)', name_en: 'European seabass' } }],
+    }])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Il mio profilo' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Modifica evento: Uscita di pesca/ }))
+    expect(await screen.findByRole('heading', { name: 'Modifica evento' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Ora cattura (opzionale)')).toHaveValue('09:15')
+    expect(screen.getByLabelText('Latitudine')).toHaveValue(45.44)
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'Updated trip' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salva evento' }))
+
+    await waitFor(() => expect(backend.updateEvent).toHaveBeenCalledWith('trip-1', expect.objectContaining({ note: 'Updated trip' }), [{ species_id: 1, quantity: 2, caught_on: '2026-10-23', caught_time: '09:15', latitude: 45.44, longitude: 12.31 }], []))
+  })
+
+  it('asks before deleting an event and then deletes it', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.getEvents.mockResolvedValue([{ id: 'trip-delete', event_type: 'Fishing trip', event_date: '2026-10-23', start_at: null, end_at: null, note: '', created_at: '2026-10-23T08:00:00Z', event_attachments: [], event_catches: [] }])
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Il mio profilo' }))
+    fireEvent.click(await screen.findByRole('button', { name: /Elimina evento: Uscita di pesca/ }))
+    expect(await screen.findByText('Vuoi eliminare questo evento e le sue catture? L’azione non si può annullare.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Elimina' }))
+    await waitFor(() => expect(backend.deleteEvent).toHaveBeenCalledWith('trip-delete'))
   })
 
   it('switches translated dashboard content between Italian and English', async () => {
@@ -136,5 +245,22 @@ describe('dashboard weather readings', () => {
       if (originalGeolocation) Object.defineProperty(navigator, 'geolocation', originalGeolocation)
       else Reflect.deleteProperty(navigator, 'geolocation')
     }
+  })
+
+  it('changes the chart data window while defaulting to the latest 24 hours', async () => {
+    backend.getWeatherObservations.mockResolvedValue([
+      { recorded_at: '2026-10-28T12:00:00', tide_level_m: 0.62, water_temp_c: 19.4 },
+      { recorded_at: '2026-10-27T12:00:00', tide_level_m: 0.51, water_temp_c: 19.1 },
+      { recorded_at: '2026-10-26T12:00:00', tide_level_m: 0.44, water_temp_c: 18.9 },
+      { recorded_at: '2026-10-25T12:00:00', tide_level_m: 0.39, water_temp_c: 18.6 },
+    ])
+    const { container } = render(<App />)
+
+    const range = await screen.findByRole('combobox', { name: 'Intervallo' })
+    expect(range).toHaveValue('24h')
+    const waterPath = container.querySelector('.observation-line--water')!
+    const pointsInDefaultRange = waterPath.getAttribute('d')!.match(/[ML]/g)!.length
+    fireEvent.change(range, { target: { value: '3d' } })
+    await waitFor(() => expect(waterPath.getAttribute('d')!.match(/[ML]/g)!.length).toBeGreaterThan(pointsInDefaultRange))
   })
 })

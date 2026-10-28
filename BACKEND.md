@@ -5,7 +5,7 @@ Lagoon uses Supabase for hosted Postgres, authentication, and private file stora
 ## Create the backend
 
 1. Create a project at [supabase.com/dashboard](https://supabase.com/dashboard). Choose a database password and a region near your users.
-2. Open **SQL Editor → New query**, paste the complete contents of `supabase/migrations/20261028000000_lagoon_backend.sql`, and run it.
+2. Open **SQL Editor → New query** and run the migration files in order: `20261028000000_lagoon_backend.sql`, `20261028000100_lagoon_weather_observations.sql`, `20261028000200_fishing_event_catches.sql`, then `20261028000300_catch_time_and_position.sql`. If the backend is already set up through the previous fishing-event migration, run only `20261028000300_catch_time_and_position.sql`. It adds optional catch time and coordinates. Event edit/delete and catch edits use the existing owner-scoped RLS policies.
 3. Open **Project Settings → API**. Copy the Project URL and the publishable key (or legacy `anon` key). Do not put the `service_role` or secret key in the frontend.
 4. Copy `.env.example` to `.env.local` and fill in:
 
@@ -57,7 +57,7 @@ Social sign-in redirects back to the app URL. Add `http://localhost:5173/**` to 
 ## What is connected
 
 - Account sign-up/sign-in and session renewal.
-- Private event journal with date, notes, and file uploads.
+- Private event journal with editable/deletable events, optional trip times, and file uploads. Fishing trips can include multiple fish species, quantities, optional catch date/time, and optional coordinates (entered manually or captured with browser geolocation).
 - Community text posts.
 - Private saved notes in the chat area. Direct user-to-user messaging is not implemented yet.
 - Daily sunrise and sunset from Open-Meteo, using the browser's saved location. If location permission is declined on first use, Venice is selected; users can change the city from the active-location control. The app requests the API timezone automatically and links to Open-Meteo for attribution.

@@ -1,17 +1,31 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, ArrowRight, Bell, CalendarDays, ChevronDown, ChevronRight, Fish, LayoutDashboard, MapPin, Menu, MessageCircle, Moon, Paperclip, Plus, Search, Send, Settings, ShieldCheck, Sun, Sunrise, Sunset, Thermometer, UserRound, Users, Waves, X } from 'lucide-react'
+import { Activity, ArrowRight, Bell, CalendarDays, ChevronDown, ChevronRight, Fish, LayoutDashboard, LocateFixed, MapPin, Menu, MessageCircle, Moon, Paperclip, Pencil, Plus, Search, Send, Settings, ShieldCheck, Sun, Sunrise, Sunset, Thermometer, Trash2, UserRound, Users, Waves, X } from 'lucide-react'
 import type { HistoryRow } from './domain/weather'
-import { backendReady, createEvent, createMessage, createPost, exchangeOAuthCode, getEvents, getMessages, getPosts, getWeatherObservations, getWeatherStation, readSession, signIn, signInWithProvider, signOut, signUp, type EventRow, type MessageRow, type PostRow, type Session, type WeatherObservationRow, type WeatherStationRow } from './backend/supabase'
+import { backendReady, createEvent, createMessage, createPost, deleteEvent as removeEvent, exchangeOAuthCode, getEventAttachmentUrl, getEvents, getFishSpecies, getMessages, getPosts, getWeatherObservations, getWeatherStation, readSession, signIn, signInWithProvider, signOut, signUp, type EventAttachmentRow, type EventCatchInput, type EventRow, type FishSpeciesRow, type MessageRow, type PostRow, type Session, type WeatherObservationRow, type WeatherStationRow, updateEvent } from './backend/supabase'
 import { t, type Language, type TranslationKey } from './i18n'
-import { AuthScreen, Avatar, Button, Card, CardHeader, Dialog, Field, IconButton, MetricCard, PageHeading } from './design-system'
+import { AuthScreen, Avatar, Button, Card, CardHeader, Dialog, Field, IconButton, MetricCard, PageHeading, Switch } from './design-system'
 import { getSolarTimes, searchPlaces, type PlaceResult, type SolarTimes } from './services/solar'
 
 type Page = 'dashboard' | 'feed' | 'chat' | 'history' | 'forecast' | 'profile'
-type UserEvent = { id: string; type: string; date: string; note: string; attachments: string[] }
+type UserEventCatch = { id: string; speciesId: number; speciesNameIt: string; speciesNameEn: string; quantity: number; caughtOn: string | null; caughtTime: string | null; latitude: number | null; longitude: number | null }
+type UserEvent = { id: string; type: string; date: string; startAt: string | null; endAt: string | null; note: string; attachments: EventAttachmentRow[]; catches: UserEventCatch[] }
+type CatchDraft = { key: string; speciesId: string; quantity: string; caughtOn: string; caughtTime: string; latitude: string; longitude: string }
 type UserLocation = { name: string; country: string; latitude: number; longitude: number; source: 'gps' | 'manual' | 'fallback' }
 
 const locationStorageKey = 'lagoon.user-location'
 const veniceLocation: UserLocation = { name: 'Venezia', country: 'Italia', latitude: 45.4408, longitude: 12.3155, source: 'fallback' }
+
+function mapEvent(item: EventRow): UserEvent {
+  return {
+    id: item.id, type: item.event_type, date: item.event_date, startAt: item.start_at, endAt: item.end_at, note: item.note,
+    attachments: item.event_attachments ?? [],
+    catches: (item.event_catches ?? []).map((itemCatch) => ({
+      id: itemCatch.id, speciesId: itemCatch.species_id,
+      speciesNameIt: itemCatch.fish_species?.name_it ?? '', speciesNameEn: itemCatch.fish_species?.name_en ?? '',
+      quantity: itemCatch.quantity, caughtOn: itemCatch.caught_on, caughtTime: itemCatch.caught_time, latitude: itemCatch.latitude, longitude: itemCatch.longitude,
+    })),
+  }
+}
 
 function readUserLocation(): UserLocation | null {
   try {
@@ -37,6 +51,11 @@ function requestDeviceLocation(): Promise<UserLocation> {
 function localDateValue() {
   const today = new Date()
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+}
+
+function localDateTimeInput(value: string) {
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
 }
 
 const nav: { id: Page; key: TranslationKey; icon: typeof LayoutDashboard }[] = [
@@ -91,12 +110,12 @@ export default function App() {
   useEffect(() => {
     if (!session) return
     Promise.all([getEvents(), getPosts(), getMessages()]).then(([eventRows, postRows, messageRows]) => {
-      setEvents(eventRows.map((item: EventRow) => ({ id: item.id, type: item.event_type, date: item.event_date, note: item.note, attachments: (item.event_attachments ?? []).map((file) => file.file_name) })))
+      setEvents(eventRows.map(mapEvent))
       setPosts(postRows); setMessages(messageRows)
     }).catch((cause: Error) => setError(cause.message))
     getWeatherStation().then(async (stationRow) => {
       setWeatherStation(stationRow)
-      setWeatherObservations(stationRow ? await getWeatherObservations(stationRow.id, 1000) : [])
+      setWeatherObservations(stationRow ? await getWeatherObservations(stationRow.id, 9000) : [])
     }).catch((cause: Error) => setError(cause.message))
   }, [session])
   useEffect(() => {
@@ -190,7 +209,7 @@ export default function App() {
     {mobileNav && <button className="nav-scrim" aria-label={tr('closeNavigation')} onClick={() => setMobileNav(false)} />}
     <main className="main-area">
       <header className="topbar"><div className="breadcrumbs"><IconButton className="mobile-menu" label={tr('openMenu')} onClick={() => setMobileNav(true)}><Menu size={21}/></IconButton><span>{tr('area')}</span><ChevronRight size={14}/><strong>{tr(({ dashboard: 'dashboard', feed: 'feed', chat: 'chat', history: 'history', forecast: 'forecast', profile: 'profile' } as const)[page])}</strong></div><div className="top-actions"><label className="search-box"><Search size={16}/><input aria-label={tr('search')} placeholder={`${tr('search')}…`} value={search} onChange={(e) => setSearch(e.target.value)}/><kbd>⌘ K</kbd></label><IconButton className="theme-toggle" onClick={() => setDark(!dark)} label={tr('changeTheme')}>{dark ? <Sun size={18}/> : <Moon size={18}/>}</IconButton><IconButton className="language-toggle" onClick={() => setLang(lang === 'it' ? 'en' : 'it')} label={tr('changeLanguage')}>{lang.toUpperCase()}</IconButton><IconButton className="notification-button" label={tr('notifications')} onClick={() => setToast(tr('noNotifications'))}><Bell size={18}/></IconButton><Avatar initials={(session.user.email ?? 'U').slice(0, 2).toUpperCase()} tone="me" className="top-avatar"/></div></header>
-      <div className="page-content">{error && <div className="backend-error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}{page === 'dashboard' && <Dashboard posts={posts} sessionName={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} station={weatherStation} observations={weatherObservations.slice(0,288)} locationLabel={locationLabel} locationReady={locationReady} sunTimes={sunTimes} solarLoading={solarLoading} solarError={solarError} tr={tr} lang={lang} go={go}/ >}{page === 'feed' && <Feed tr={tr} post={post} setPost={setPost} posts={posts} onPost={async () => { if (post.trim()) { try { await createPost(post.trim()); setPosts(await getPosts()); setPost(''); setToast(tr('postPublished')) } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'chat' && <Chat tr={tr} messages={messages} draft={draft} setDraft={setDraft} onSend={async () => { if (draft.trim()) { try { await createMessage(draft.trim()); setMessages(await getMessages()); setDraft('') } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'history' && <HistoryPage tr={tr} search={search} setSearch={setSearch} year={year} setYear={setYear} rows={filteredHistory}/ >}{page === 'forecast' && <Forecast tr={tr} period={period} setPeriod={setPeriod}/ >}{page === 'profile' && <Profile tr={tr} lang={lang} name={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} events={events} eventModalOpen={eventModalOpen} eventType={eventType} eventDate={eventDate} eventNote={eventNote} eventFiles={eventFiles} setEventType={setEventType} setEventDate={setEventDate} setEventNote={setEventNote} setEventFiles={setEventFiles} onOpenEvent={() => { setEventType('Fishing trip'); setEventDate(localDateValue()); setEventNote(''); setEventFiles([]); setEventModalOpen(true) }} onCloseEvent={() => setEventModalOpen(false)} onSaveEvent={async (event) => { try { const saved = await createEvent({ event_type: event.type, event_date: event.date, note: event.note }, event.attachments); setEvents((current) => [{ ...event, id: saved.id, attachments: event.attachments.map((file) => file.name) }, ...current]); setEventModalOpen(false); setToast(tr('eventSaved')) } catch (cause) { setError((cause as Error).message) } }}/>}</div>
+      <div className="page-content">{error && <div className="backend-error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}{page === 'dashboard' && <Dashboard posts={posts} sessionName={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} station={weatherStation} observations={weatherObservations} events={events} locationLabel={locationLabel} locationReady={locationReady} sunTimes={sunTimes} solarLoading={solarLoading} solarError={solarError} tr={tr} lang={lang} go={go}/ >}{page === 'feed' && <Feed tr={tr} post={post} setPost={setPost} posts={posts} onPost={async () => { if (post.trim()) { try { await createPost(post.trim()); setPosts(await getPosts()); setPost(''); setToast(tr('postPublished')) } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'chat' && <Chat tr={tr} messages={messages} draft={draft} setDraft={setDraft} onSend={async () => { if (draft.trim()) { try { await createMessage(draft.trim()); setMessages(await getMessages()); setDraft('') } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'history' && <HistoryPage tr={tr} search={search} setSearch={setSearch} year={year} setYear={setYear} rows={filteredHistory}/ >}{page === 'forecast' && <Forecast tr={tr} period={period} setPeriod={setPeriod}/ >}{page === 'profile' && <Profile tr={tr} lang={lang} name={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} events={events} eventModalOpen={eventModalOpen} eventType={eventType} eventDate={eventDate} eventNote={eventNote} eventFiles={eventFiles} setEventType={setEventType} setEventDate={setEventDate} setEventNote={setEventNote} setEventFiles={setEventFiles} setEventModalOpen={setEventModalOpen} onOpenEvent={() => { setEventType('Fishing trip'); setEventDate(localDateValue()); setEventNote(''); setEventFiles([]); setEventModalOpen(true) }} onCloseEvent={() => setEventModalOpen(false)} onSaveEvent={async (event) => { try { const fields = { event_type: event.type, event_date: event.date, start_at: event.startAt ? new Date(event.startAt).toISOString() : null, end_at: event.endAt ? new Date(event.endAt).toISOString() : null, note: event.note }; if (event.id) await updateEvent(event.id, fields, event.catches, event.attachments); else await createEvent(fields, event.catches, event.attachments); setEvents((await getEvents()).map(mapEvent)); setEventModalOpen(false); setToast(tr(event.id ? 'eventUpdated' : 'eventSaved')) } catch (cause) { setError((cause as Error).message) } }} onDeleteEvent={async (eventId) => { try { await removeEvent(eventId); setEvents((current) => current.filter((event) => event.id !== eventId)); setToast(tr('eventDeleted')) } catch (cause) { setError((cause as Error).message) } }}/>}</div>
       <footer className="page-footer"><span>{tr('connectedCloud')}</span><span><button onClick={() => { signOut(); setSession(null) }}>{tr('signOut')}</button> <span className="footer-sep">·</span> Lagoon <Waves size={13}/></span></footer>
     </main>
     {toast && <div className="toast" role="status"><ShieldCheck size={17}/>{toast}<IconButton label={tr('close')} onClick={() => setToast('')}><X size={15}/></IconButton></div>}
@@ -213,16 +232,27 @@ export default function App() {
 
 type Tr = (key: TranslationKey) => string
 
+function eventTypeLabel(type: string, tr: Tr) {
+  if (type === 'Fishing trip' || type === 'Uscita di pesca') return tr('catch')
+  if (type === 'Measurement' || type === 'Misurazione') return tr('measurement')
+  if (type === 'Note' || type === 'Nota') return tr('note')
+  return type
+}
+
 function BackendSetup({ tr }: { tr: Tr }) { return <main className="auth-screen"><Card className="auth-card"><div className="brand"><div className="brand-mark"><Waves size={22}/></div><span>lagoon<span className="brand-dot">.</span></span></div><h1>{tr('connectBackend')}</h1><p>{tr('backendSetupText')}</p><p>{tr('backendSetupHelp')}</p></Card></main> }
 
-function Dashboard({ posts, sessionName, station, observations, locationLabel, locationReady, sunTimes, solarLoading, solarError, tr, lang, go }: { posts: PostRow[]; sessionName: string; station: WeatherStationRow | null; observations: WeatherObservationRow[]; locationLabel: string; locationReady: boolean; sunTimes: SolarTimes | null; solarLoading: boolean; solarError: boolean; tr: Tr; lang: Language; go: (page: Page) => void }) {
+function Dashboard({ posts, sessionName, station, observations, events, locationLabel, locationReady, sunTimes, solarLoading, solarError, tr, lang, go }: { posts: PostRow[]; sessionName: string; station: WeatherStationRow | null; observations: WeatherObservationRow[]; events: UserEvent[]; locationLabel: string; locationReady: boolean; sunTimes: SolarTimes | null; solarLoading: boolean; solarError: boolean; tr: Tr; lang: Language; go: (page: Page) => void }) {
+  const [chartRange, setChartRange] = useState<'6h' | '12h' | '24h' | '3d' | '7d' | '30d'>('24h')
+  const [showEvents, setShowEvents] = useState(false)
   const latest = observations[0]
   const latestWater = observations.find((row) => row.water_temp_c !== null)
   const latestTide = observations.find((row) => row.tide_level_m !== null)
   const formatReadingTime = (value?: string) => value ? new Date(`${value.replace(' ', 'T')}Z`).toLocaleString(lang === 'it' ? 'it-IT' : 'en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) : tr('noReading')
   const formatSolarTime = (value?: string) => value?.match(/T(\d{2}:\d{2})/)?.[1] ?? '—'
   const solarDetail = !locationReady ? tr('locatingLocation') : solarLoading ? tr('solarLoading') : solarError ? tr('sunTimesUnavailable') : `${locationLabel} · ${tr('locationToday')}`
-  const graphRows = observations.slice().reverse()
+  const rangeHours = { '6h': 6, '12h': 12, '24h': 24, '3d': 72, '7d': 168, '30d': 720 }[chartRange]
+  const latestTimestamp = latest ? new Date(`${latest.recorded_at.replace(' ', 'T')}Z`).getTime() : 0
+  const graphRows = observations.filter((row) => new Date(`${row.recorded_at.replace(' ', 'T')}Z`).getTime() >= latestTimestamp - rangeHours * 60 * 60 * 1000).slice().reverse()
   return <>
     <PageHeading eyebrow={`${new Date().toLocaleDateString(lang === 'it' ? 'it-IT' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}  ·  ${tr('area').toUpperCase()}`} title={`${tr('goodMorning')}, ${sessionName}`} subtitle={tr('greeting')} action={<Button variant="secondary" onClick={() => go('history')}><CalendarDays size={16}/>{tr('viewHistory')}<ArrowRight size={15}/></Button>}/>
     <div className="dashboard-toolbar"><div className="station-selector"><span className="selector-pin"><MapPin size={16}/></span><span><small>{tr('stations')}</small><strong>{station?.name ?? tr('noStationImported')}</strong></span></div><div className="live-stamp">{latest ? `${tr('sourceSnapshot')} ${formatReadingTime(latest.recorded_at)}` : tr('noImportedObservations')}</div></div>
@@ -234,7 +264,7 @@ function Dashboard({ posts, sessionName, station, observations, locationLabel, l
     </section>
     <a className="solar-attribution" href="https://open-meteo.com/" target="_blank" rel="noreferrer">{tr('solarAttribution')}</a>
     <div className="content-grid">
-      <Card className="chart-panel"><CardHeader eyebrow={tr('sourceObservations')} title={tr('chartTitle')} description={station ? `${station.name} · ${tr('chartDescription')}` : tr('importCsvHint')}/>{graphRows.length ? <ObservationChart rows={graphRows} lang={lang} tr={tr}/> : <div className="empty-state">{tr('noObservationsLoaded')}</div>}<div className="chart-note"><span>{tr('fromComune')}</span><button onClick={() => go('history')}>{tr('browseData')} <ArrowRight size={14}/></button></div></Card>
+      <Card className="chart-panel"><CardHeader eyebrow={tr('sourceObservations')} title={tr('chartTitle')} description={station ? `${station.name} · ${tr('chartDescription')}` : tr('importCsvHint')} action={<div className="chart-controls"><Switch checked={showEvents} onChange={setShowEvents} label={tr('showEvents')}/><label className="chart-range"><span>{tr('chartInterval')}</span><select aria-label={tr('chartInterval')} value={chartRange} onChange={(event) => setChartRange(event.target.value as typeof chartRange)}><option value="6h">{tr('range6h')}</option><option value="12h">{tr('range12h')}</option><option value="24h">{tr('range24h')}</option><option value="3d">{tr('range3d')}</option><option value="7d">{tr('range7d')}</option><option value="30d">{tr('range30d')}</option></select></label></div>}/>{graphRows.length ? <ObservationChart rows={graphRows} events={events} showEvents={showEvents} lang={lang} tr={tr}/> : <div className="empty-state">{tr('noObservationsLoaded')}</div>}<div className="chart-note"><span>{tr('fromComune')}</span><button onClick={() => go('history')}>{tr('browseData')} <ArrowRight size={14}/></button></div></Card>
       <Card className="stations-panel"><CardHeader eyebrow={tr('localNetwork')} title={tr('stations')}/>{station ? <div className="station-row selected"><div className="station-symbol"><MapPin size={17}/></div><div className="station-info"><strong>{station.name}</strong><span>{station.area}</span></div><div className="station-values"><strong>{observations.length.toLocaleString(lang === 'it' ? 'it-IT' : 'en-GB')}</strong><span>{tr('recentRows')}</span></div></div> : <p className="empty-state">{tr('noStationsConfigured')}</p>}<a className="text-action" href={station?.source_url} target="_blank" rel="noreferrer">{tr('sourceAndLicense')} <ArrowRight size={15}/></a></Card>
     </div>
     <div className="bottom-grid"><Card className="forecast-card"><CardHeader eyebrow={tr('forecastEyebrow')} title={tr('week')}/><p className="empty-state">{tr('noForecastProvider')}</p><button className="text-action forecast-link" onClick={() => go('forecast')}>{tr('seeForecast')}<ArrowRight size={15}/></button></Card></div>
@@ -243,9 +273,12 @@ function Dashboard({ posts, sessionName, station, observations, locationLabel, l
   </>
 }
 
-function ObservationChart({ rows, lang, tr }: { rows: WeatherObservationRow[]; lang: Language; tr: Tr }) {
+function ObservationChart({ rows, events, showEvents, lang, tr }: { rows: WeatherObservationRow[]; events: UserEvent[]; showEvents: boolean; lang: Language; tr: Tr }) {
   const chartRef = useRef<HTMLDivElement>(null)
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+  const [selectedEvent, setSelectedEvent] = useState<UserEvent | null>(null)
+  const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({})
+  const [attachmentError, setAttachmentError] = useState(false)
   const [pinned, setPinned] = useState(false)
   const [width, setWidth] = useState(860)
   const height = 270, left = 66, right = width - 66, top = 22, bottom = 218
@@ -256,6 +289,17 @@ function ObservationChart({ rows, lang, tr }: { rows: WeatherObservationRow[]; l
     observer.observe(target)
     return () => observer.disconnect()
   }, [])
+  useEffect(() => {
+    if (!selectedEvent) { setAttachmentUrls({}); setAttachmentError(false); return }
+    let cancelled = false
+    setAttachmentUrls({}); setAttachmentError(false)
+    Promise.all(selectedEvent.attachments.map(async (file) => {
+      const isPhoto = file.content_type?.startsWith('image/') || /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(file.file_name)
+      const signedUrl = await getEventAttachmentUrl(file.object_path, isPhoto ? undefined : file.file_name)
+      return [file.object_path, signedUrl] as const
+    })).then((entries) => { if (!cancelled) setAttachmentUrls(Object.fromEntries(entries)) }).catch(() => { if (!cancelled) setAttachmentError(true) })
+    return () => { cancelled = true }
+  }, [selectedEvent])
   const series = (field: 'tide_level_m' | 'water_temp_c') => {
     const values = rows.map((row) => row[field]).filter((value): value is number => value !== null && Number.isFinite(value))
     const actualMin = values.length ? Math.min(...values) : 0
@@ -290,6 +334,19 @@ function ObservationChart({ rows, lang, tr }: { rows: WeatherObservationRow[]; l
   const selectedX = selectedIndex === null ? null : xAt(selectedIndex)
   const selectedWaterY = selected?.water_temp_c == null ? null : water.y(selected.water_temp_c)
   const selectedTideY = selected?.tide_level_m == null ? null : tide.y(selected.tide_level_m)
+  const selectedEventTimes = selectedEvent ? [selectedEvent.startAt, selectedEvent.endAt].map((value) => value ? new Date(value).toLocaleTimeString(lang === 'it' ? 'it-IT' : 'en-GB', { hour: '2-digit', minute: '2-digit' }) : '—').join('–') : ''
+  const selectedEventDescription = selectedEvent ? `${dateFormat(selectedEvent.date, { day: 'numeric', month: 'long', year: 'numeric' })} · ${selectedEvent.startAt || selectedEvent.endAt ? selectedEventTimes : tr('eventDateOnly')}` : ''
+  const visibleEvents = showEvents && rows.length ? events.filter((event) => {
+    const eventDate = event.date.slice(0, 10)
+    return eventDate >= rows[0].recorded_at.slice(0, 10) && eventDate <= rows[rows.length - 1].recorded_at.slice(0, 10)
+  }) : []
+  const eventPositions = visibleEvents.map((event, index) => {
+    const date = event.date.slice(0, 10)
+    const matchingRows = rows.map((row, rowIndex) => row.recorded_at.slice(0, 10) === date ? rowIndex : -1).filter((rowIndex) => rowIndex >= 0)
+    const nearest = matchingRows.length ? (matchingRows[0] + matchingRows[matchingRows.length - 1]) / 2 : rows.findIndex((row) => row.recorded_at.slice(0, 10) >= date)
+    const sameDateIndex = visibleEvents.slice(0, index).filter((item) => item.date.slice(0, 10) === date).length
+    return { event, x: xAt(Math.max(0, nearest)) + (sameDateIndex % 2 ? 10 : -10) * Math.floor(sameDateIndex / 2), y: bottom - 11 }
+  })
   const xTickCount = Math.min(5, rows.length, Math.max(2, Math.floor(width / 150)))
   const xTicks = Array.from(new Set(Array.from({ length: xTickCount }, (_, index) => Math.round(index * (rows.length - 1) / Math.max(xTickCount - 1, 1)))))
   const selectFromPointer = (event: React.PointerEvent<HTMLDivElement>) => setSelectedIndex(nearestIndex(event.clientX))
@@ -307,6 +364,7 @@ function ObservationChart({ rows, lang, tr }: { rows: WeatherObservationRow[]; l
         <text x="15" y={(top + bottom) / 2} textAnchor="middle" className="observation-axis-title" transform={`rotate(-90 15 ${(top + bottom) / 2})`}>{tr('axisTide')}</text>
         <text x={width - 12} y={(top + bottom) / 2} textAnchor="middle" className="observation-axis-title" transform={`rotate(90 ${width - 12} ${(top + bottom) / 2})`}>{tr('axisWater')}</text>
         <path d={water.path} className="observation-line observation-line--water"/><path d={tide.path} className="observation-line observation-line--tide"/>
+        {eventPositions.map(({ event, x, y }) => { const EventIcon = /fish|pesca/i.test(event.type) ? Fish : /measure|misuraz/i.test(event.type) ? Thermometer : /note|nota/i.test(event.type) ? MessageCircle : CalendarDays; return <g key={event.id} className="observation-event-marker" role="button" tabIndex={0} aria-label={`${tr('event')}: ${eventTypeLabel(event.type, tr)} · ${dateFormat(event.date, { day: 'numeric', month: 'long', year: 'numeric' })}`} onPointerDown={(pointerEvent) => pointerEvent.stopPropagation()} onClick={(clickEvent) => { clickEvent.stopPropagation(); setSelectedEvent(event) }} onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' || keyEvent.key === ' ') { keyEvent.preventDefault(); keyEvent.stopPropagation(); setSelectedEvent(event) } }}><title>{eventTypeLabel(event.type, tr)} · {dateFormat(event.date, { day: 'numeric', month: 'long', year: 'numeric' })}</title><line x1={x} x2={x} y1={y + 9} y2={bottom + 1} className="observation-event-marker__stem"/><circle cx={x} cy={y} r="9" className="observation-event-marker__dot"/><EventIcon x={x - 5} y={y - 5} size={10} className="observation-event-marker__icon"/></g> })}
         {selectedX !== null && <><line x1={selectedX} x2={selectedX} y1={top} y2={bottom} className="observation-crosshair"/>{selectedWaterY !== null && <circle cx={selectedX} cy={selectedWaterY} r="4.5" className="observation-point observation-point--water"/>}{selectedTideY !== null && <circle cx={selectedX} cy={selectedTideY} r="4.5" className="observation-point observation-point--tide"/>}</>}
         {xTicks.map((index) => { const row = rows[index]; return <g key={index}><line x1={xAt(index)} x2={xAt(index)} y1={bottom} y2={bottom + 4} className="observation-axis-tick"/><text x={xAt(index)} y={bottom + 20} textAnchor={index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'} className="observation-axis-label">{dateFormat(row.recorded_at, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</text></g> })}
       </svg>
@@ -317,6 +375,7 @@ function ObservationChart({ rows, lang, tr }: { rows: WeatherObservationRow[]; l
       </div>}
     </div>
     <div className="observation-axis-caption">{tr('sourceTime')}</div>
+    {selectedEvent && <Dialog eyebrow={tr('eventDetails')} title={eventTypeLabel(selectedEvent.type, tr)} description={selectedEventDescription} closeLabel={tr('close')} onClose={() => setSelectedEvent(null)}><div className="chart-event-detail">{selectedEvent.catches.length > 0 && <><strong>{tr('catchSummary')}</strong><ul>{selectedEvent.catches.map((itemCatch) => <li key={itemCatch.id}><Fish size={14}/>{itemCatch.quantity} × {lang === 'it' ? itemCatch.speciesNameIt : itemCatch.speciesNameEn}{itemCatch.caughtOn ? ` · ${dateFormat(itemCatch.caughtOn, { day: 'numeric', month: 'long', year: 'numeric' })}` : ''}{itemCatch.caughtTime ? ` ${itemCatch.caughtTime.slice(0, 5)}` : ''}{itemCatch.latitude != null && itemCatch.longitude != null ? ` · ${itemCatch.latitude.toFixed(4)}, ${itemCatch.longitude.toFixed(4)}` : ''}</li>)}</ul></>}{selectedEvent.note ? <p>{selectedEvent.note}</p> : null}{selectedEvent.attachments.length > 0 && <><strong>{tr('eventFilesLabel')}</strong>{attachmentError && <p role="alert">{tr('attachmentUnavailable')}</p>}<ul className="event-attachment-list">{selectedEvent.attachments.map((file) => { const isPhoto = file.content_type?.startsWith('image/') || /\.(avif|bmp|gif|jpe?g|png|webp)$/i.test(file.file_name); const href = attachmentUrls[file.object_path]; return <li key={file.object_path}>{href ? isPhoto ? <a className="event-photo-link" href={href} target="_blank" rel="noreferrer"><img src={href} alt={file.file_name}/><span>{file.file_name}</span></a> : <a className="event-file-download" href={href} download={file.file_name}><Paperclip size={14}/>{file.file_name}<span>{tr('download')}</span></a> : <span className="event-file-loading">{tr('attachmentLoading')} · {file.file_name}</span>}</li> })}</ul></>}{!selectedEvent.note && selectedEvent.attachments.length === 0 && selectedEvent.catches.length === 0 && <p>{tr('noEventDetails')}</p>}</div></Dialog>}
   </>
 }
 
@@ -329,7 +388,7 @@ function HistoryPage({ tr, search, setSearch, year, setYear, rows }: { tr: Tr; s
 }
 function Forecast({ tr }: { tr: Tr; period: string; setPeriod: (v: string) => void }) { return <><PageHeading eyebrow={tr('forecastEyebrow')} title={tr('forecast')} subtitle={tr('forecastSubtitle')}/><Card className="extended-forecast"><CardHeader eyebrow={tr('dailyForecast')} title={tr('upcomingForecast')}/><p className="empty-state">{tr('noForecastValues')}</p></Card></> }
 
-function Profile({ tr, lang, name, events, eventModalOpen, eventType, eventDate, eventNote, eventFiles, setEventType, setEventDate, setEventNote, setEventFiles, onOpenEvent, onCloseEvent, onSaveEvent }: {
+function Profile({ tr, lang, name, events, eventModalOpen, eventType, eventDate, eventNote, eventFiles, setEventType, setEventDate, setEventNote, setEventFiles, setEventModalOpen, onOpenEvent, onCloseEvent, onSaveEvent, onDeleteEvent }: {
   tr: Tr
   lang: Language
   name: string
@@ -343,32 +402,74 @@ function Profile({ tr, lang, name, events, eventModalOpen, eventType, eventDate,
   setEventDate: (value: string) => void
   setEventNote: (value: string) => void
   setEventFiles: (value: File[]) => void
+  setEventModalOpen: (value: boolean) => void
   onOpenEvent: () => void
   onCloseEvent: () => void
-  onSaveEvent: (event: { type: string; date: string; note: string; attachments: File[] }) => void
+  onSaveEvent: (event: { id?: string; type: string; date: string; startAt: string; endAt: string; note: string; attachments: File[]; catches: EventCatchInput[] }) => void
+  onDeleteEvent: (eventId: string) => void
 }) {
+  const [fishSpecies, setFishSpecies] = useState<FishSpeciesRow[]>([])
+  const [eventStartAt, setEventStartAt] = useState('')
+  const [eventEndAt, setEventEndAt] = useState('')
+  const [eventCatches, setEventCatches] = useState<CatchDraft[]>([])
+  const [editingEventId, setEditingEventId] = useState<string | null>(null)
+  const [deleteCandidate, setDeleteCandidate] = useState<UserEvent | null>(null)
+  const [catchLocationError, setCatchLocationError] = useState('')
+  const [speciesLoadError, setSpeciesLoadError] = useState('')
+  useEffect(() => { getFishSpecies().then(setFishSpecies).catch((cause: Error) => setSpeciesLoadError(cause.message)) }, [])
+  const isFishingTrip = eventType === 'Fishing trip' || eventType === 'Uscita di pesca'
+  const updateCatch = (key: string, values: Partial<CatchDraft>) => setEventCatches((current) => current.map((item) => item.key === key ? { ...item, ...values } : item))
+  useEffect(() => {
+    if (!eventModalOpen || editingEventId) return
+    setEventStartAt(''); setEventEndAt('')
+    setEventCatches(isFishingTrip ? [newCatch()] : [])
+  }, [eventModalOpen, editingEventId])
+  const openEditEvent = (event: UserEvent) => {
+    setEditingEventId(event.id); setEventType(event.type); setEventDate(event.date); setEventNote(event.note); setEventFiles([])
+    setEventStartAt(event.startAt ? localDateTimeInput(event.startAt) : ''); setEventEndAt(event.endAt ? localDateTimeInput(event.endAt) : '')
+    setEventCatches(event.catches.map((itemCatch) => ({ key: itemCatch.id, speciesId: String(itemCatch.speciesId), quantity: String(itemCatch.quantity), caughtOn: itemCatch.caughtOn ?? '', caughtTime: itemCatch.caughtTime?.slice(0, 5) ?? '', latitude: itemCatch.latitude == null ? '' : String(itemCatch.latitude), longitude: itemCatch.longitude == null ? '' : String(itemCatch.longitude) })))
+    setEventModalOpen(true)
+  }
+  const newCatch = (): CatchDraft => ({ key: `${Date.now()}-${Math.random()}`, speciesId: '', quantity: '1', caughtOn: '', caughtTime: '', latitude: '', longitude: '' })
+  const useCatchLocation = (key: string) => {
+    if (!navigator.geolocation) { setCatchLocationError(tr('locationUnavailable')); return }
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
+      updateCatch(key, { latitude: coords.latitude.toFixed(6), longitude: coords.longitude.toFixed(6) })
+      setCatchLocationError('')
+    }, () => setCatchLocationError(tr('locationUnavailable')), { enableHighAccuracy: true, maximumAge: 60000, timeout: 10000 })
+  }
   return <>
     <PageHeading eyebrow={tr('profileEyebrow')} title={tr('profile')} subtitle={tr('profileSubtitle')} action={<Button variant="secondary"><Settings size={16}/>{tr('settings')}</Button>}/>
     <Card as="div" className="profile-overview"><div className="profile-cover"><div className="cover-pattern"><Waves/></div></div><div className="profile-main"><Avatar initials={name.slice(0, 2).toUpperCase()} tone="me" className="profile-avatar"/><div className="profile-identity"><h2>{name}</h2><span><MapPin size={14}/> {events.length} {tr('savedEventsCount')}</span><p>{tr('yourLagoonProfile')}</p></div></div><div className="profile-stats"><div><strong>{events.length}</strong><span>{tr('savedEvents')}</span></div><div><strong>—</strong><span>{tr('profileFriends')}</span></div><div><strong>—</strong><span>{tr('profileStations')}</span></div><div><strong>—</strong><span>{tr('experiencePoints')}</span></div></div></Card>
     <div className="profile-columns">
       <Card className="event-panel">
-        <CardHeader eyebrow={tr('personalJournal')} title={tr('events')} action={<Button variant="primary" onClick={onOpenEvent}><Plus size={15}/>{tr('addEvent')}</Button>}/>
-        <div className="event-list">{events.map((event) => <div key={event.id}><span className="event-dot"><Fish size={15}/></span><span><strong>{tr(event.type === 'Fishing trip' ? 'catch' : event.type === 'Measurement' ? 'measurement' : event.type === 'Note' ? 'note' : 'events')} · {new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${event.date}T00:00:00`))}</strong>{event.note && <small>{event.note}</small>}<small>{tr('privateInLagoon')}</small>{event.attachments.length > 0 && <small className="event-attachments"><Paperclip size={12}/>{event.attachments.join(', ')}</small>}</span><ChevronRight size={15}/></div>)}</div>
+        <CardHeader eyebrow={tr('personalJournal')} title={tr('events')} action={<Button variant="primary" onClick={() => { setEditingEventId(null); onOpenEvent() }}><Plus size={15}/>{tr('addEvent')}</Button>}/>
+        <div className="event-list">{events.map((event) => <div key={event.id}><span className="event-dot"><Fish size={15}/></span><span><strong>{eventTypeLabel(event.type, tr)} · {new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(`${event.date}T00:00:00`))}</strong>{(event.startAt || event.endAt) && <small>{event.startAt ? new Date(event.startAt).toLocaleTimeString(lang === 'it' ? 'it-IT' : 'en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}–{event.endAt ? new Date(event.endAt).toLocaleTimeString(lang === 'it' ? 'it-IT' : 'en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'}</small>}{event.catches.map((itemCatch) => <small key={itemCatch.id}>{itemCatch.quantity} × {lang === 'it' ? itemCatch.speciesNameIt : itemCatch.speciesNameEn}{itemCatch.caughtOn ? ` · ${new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-GB').format(new Date(`${itemCatch.caughtOn}T00:00:00`))}` : ''}{itemCatch.caughtTime ? ` ${itemCatch.caughtTime.slice(0, 5)}` : ''}{itemCatch.latitude != null && itemCatch.longitude != null ? ` · ${itemCatch.latitude.toFixed(4)}, ${itemCatch.longitude.toFixed(4)}` : ''}</small>)}{event.note && <small>{event.note}</small>}<small>{tr('privateInLagoon')}</small>{event.attachments.length > 0 && <small className="event-attachments"><Paperclip size={12}/>{event.attachments.map((file) => file.file_name).join(', ')}</small>}</span><div className="event-actions"><IconButton label={`${tr('editEvent')}: ${eventTypeLabel(event.type, tr)}`} onClick={() => openEditEvent(event)}><Pencil size={15}/></IconButton><IconButton label={`${tr('deleteEvent')}: ${eventTypeLabel(event.type, tr)}`} onClick={() => setDeleteCandidate(event)}><Trash2 size={15}/></IconButton></div></div>)}</div>
       </Card>
       <Card className="badges-panel"><CardHeader eyebrow={tr('contributions')} title={tr('community')}/><p className="empty-state">{tr('noAchievements')}</p></Card>
     </div>
 
-    {eventModalOpen && <Dialog eyebrow={tr('personalJournal')} title={tr('addEventTitle')} description={tr('addEventDescription')} closeLabel={tr('close')} onClose={onCloseEvent}>
-      <form onSubmit={(e) => { e.preventDefault(); onSaveEvent({ type: eventType, date: eventDate, note: eventNote.trim(), attachments: eventFiles }) }}>
+    {eventModalOpen && <Dialog eyebrow={tr('personalJournal')} title={tr(editingEventId ? 'editEvent' : 'addEventTitle')} description={tr('addEventDescription')} closeLabel={tr('close')} onClose={onCloseEvent}>
+      <form onSubmit={(e) => { e.preventDefault(); onSaveEvent({ id: editingEventId ?? undefined, type: eventType, date: eventDate, startAt: eventStartAt, endAt: eventEndAt, note: eventNote.trim(), attachments: eventFiles, catches: isFishingTrip ? eventCatches.filter((item) => item.speciesId).map((item) => ({ species_id: Number(item.speciesId), quantity: Number(item.quantity), caught_on: item.caughtOn || null, caught_time: item.caughtTime || null, latitude: item.latitude === '' ? null : Number(item.latitude), longitude: item.longitude === '' ? null : Number(item.longitude) })) : [] }) }}>
         <div className="ds-field-grid">
-          <Field label={tr('eventType')}><select className="ds-field__control" value={eventType} onChange={(e) => setEventType(e.target.value)}><option value="Fishing trip">{tr('catch')}</option><option value="Measurement">{tr('measurement')}</option><option value="Note">{tr('note')}</option></select></Field>
+          <Field label={tr('eventType')}><select className="ds-field__control" value={eventType} onChange={(e) => { setEventType(e.target.value); if (e.target.value !== 'Fishing trip') setEventCatches([]); else if (!eventCatches.length) setEventCatches([newCatch()]) }}><option value="Fishing trip">{tr('catch')}</option><option value="Measurement">{tr('measurement')}</option><option value="Note">{tr('note')}</option></select></Field>
           <Field label={tr('date')}><input className="ds-field__control" type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} required/></Field>
         </div>
+        {isFishingTrip && <section className="fishing-event-fields" aria-label={tr('fishCaught')}>
+          <div className="ds-field-grid"><Field label={tr('startTime')}><input className="ds-field__control" type="datetime-local" value={eventStartAt} onChange={(e) => setEventStartAt(e.target.value)}/></Field><Field label={tr('endTime')}><input className="ds-field__control" type="datetime-local" min={eventStartAt || undefined} value={eventEndAt} onChange={(e) => setEventEndAt(e.target.value)}/></Field></div>
+          <div className="catch-fields-heading"><strong>{tr('fishCaught')}</strong><Button type="button" variant="secondary" onClick={() => setEventCatches((current) => [...current, newCatch()])}><Plus size={14}/>{tr('addFish')}</Button></div>
+          {speciesLoadError && <p className="backend-error" role="alert">{tr('fishSpeciesUnavailable')}</p>}
+          {eventCatches.map((item) => { const hasPosition = item.latitude !== '' || item.longitude !== ''; return <div className="catch-entry" key={item.key}><div className="catch-entry__fields"><Field label={tr('fishSpecies')}><select className="ds-field__control" value={item.speciesId} onChange={(e) => updateCatch(item.key, { speciesId: e.target.value })} required><option value="">{tr('fishSpecies')}</option>{fishSpecies.map((species) => <option key={species.id} value={species.id}>{lang === 'it' ? species.name_it : species.name_en}</option>)}</select></Field><Field label={tr('quantity')}><input className="ds-field__control" type="number" min="1" step="1" value={item.quantity} onChange={(e) => updateCatch(item.key, { quantity: e.target.value })} required/></Field><Field label={tr('catchDate')}><input className="ds-field__control" type="date" value={item.caughtOn} onChange={(e) => updateCatch(item.key, { caughtOn: e.target.value })}/></Field><Field label={tr('catchTime')}><input className="ds-field__control" type="time" value={item.caughtTime} onChange={(e) => updateCatch(item.key, { caughtTime: e.target.value })}/></Field><IconButton label={tr('removeFish')} onClick={() => setEventCatches((current) => current.filter((entry) => entry.key !== item.key))}><X size={16}/></IconButton></div><div className="catch-entry__position"><Field label={tr('latitude')}><input className="ds-field__control" type="number" min="-90" max="90" step="any" value={item.latitude} required={hasPosition} onChange={(e) => updateCatch(item.key, { latitude: e.target.value })}/></Field><Field label={tr('longitude')}><input className="ds-field__control" type="number" min="-180" max="180" step="any" value={item.longitude} required={hasPosition} onChange={(e) => updateCatch(item.key, { longitude: e.target.value })}/></Field><Button type="button" variant="secondary" onClick={() => useCatchLocation(item.key)}><LocateFixed size={14}/>{tr('useCurrentPosition')}</Button></div></div> })}
+          {catchLocationError && <p className="empty-state" role="status">{catchLocationError}</p>}
+          {!fishSpecies.length && !speciesLoadError && <p className="empty-state">{tr('fishSpecies')}</p>}
+        </section>}
         <Field label={tr('notes')} className="ds-field--spaced"><textarea className="ds-field__control ds-field__control--multiline" value={eventNote} onChange={(e) => setEventNote(e.target.value)} placeholder={tr('eventNotePlaceholder')} rows={4}/></Field>
+        {editingEventId && events.find((event) => event.id === editingEventId)?.attachments.map((file) => <small className="existing-event-file" key={file.object_path}><Paperclip size={12}/>{file.file_name}</small>)}
         <label className="ds-upload"><Paperclip size={17}/><span className="ds-upload__copy"><strong className="ds-upload__title">{tr('addFiles')}</strong><small className="ds-upload__hint">{tr('acceptedFiles')}</small></span><input type="file" accept="image/*,.pdf,.gpx,.kml,.txt,.csv" multiple onChange={(e) => setEventFiles(Array.from(e.target.files ?? []))}/></label>
         {eventFiles.length > 0 && <ul className="ds-attachment-list">{eventFiles.map((file, index) => <li key={`${file.name}-${index}`}><Paperclip size={13}/><span>{file.name}</span><small>{(file.size / 1024).toFixed(0)} KB</small></li>)}</ul>}
         <div className="ds-dialog__footer"><Button type="button" variant="secondary" onClick={onCloseEvent}>{tr('cancel')}</Button><Button type="submit" variant="primary"><Plus size={15}/>{tr('saveEvent')}</Button></div>
       </form>
     </Dialog>}
+    {deleteCandidate && <Dialog eyebrow={tr('personalJournal')} title={tr('deleteEvent')} description={tr('confirmDeleteEvent')} closeLabel={tr('cancel')} onClose={() => setDeleteCandidate(null)}><div className="ds-dialog__footer"><Button variant="secondary" onClick={() => setDeleteCandidate(null)}>{tr('cancel')}</Button><Button variant="primary" onClick={() => { onDeleteEvent(deleteCandidate.id); setDeleteCandidate(null) }}><Trash2 size={15}/>{tr('delete')}</Button></div></Dialog>}
   </>
 }

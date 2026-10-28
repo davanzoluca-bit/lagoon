@@ -1,5 +1,9 @@
 export type Session = { access_token: string; refresh_token: string; expires_at?: number; user: { id: string; email?: string; user_metadata?: Record<string, unknown> } }
-export type EventRow = { id: string; event_type: string; event_date: string; note: string; created_at: string; event_attachments?: { file_name: string; object_path: string }[] }
+export type FishSpeciesRow = { id: number; slug: string; name_it: string; name_en: string }
+export type EventCatchInput = { species_id: number; quantity: number; caught_on: string | null; caught_time: string | null; latitude: number | null; longitude: number | null }
+export type EventCatchRow = EventCatchInput & { id: string; fish_species?: FishSpeciesRow | null }
+export type EventAttachmentRow = { file_name: string; object_path: string; content_type: string }
+export type EventRow = { id: string; event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string; created_at: string; event_attachments?: EventAttachmentRow[]; event_catches?: EventCatchRow[] }
 export type PostRow = { id: string; body: string; created_at: string; author_id: string }
 export type MessageRow = { id: string; body: string; created_at: string; sender_id: string }
 export type WeatherStationRow = { id: string; slug: string; name: string; area: string; source_url: string; source_license: string; source_time_basis: string; vertical_datum: string }
@@ -62,18 +66,56 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await response.text()
   return body ? JSON.parse(body) as T : undefined as T
 }
-export const getEvents = () => request<EventRow[]>('events?select=*,event_attachments(file_name,object_path)&order=event_date.desc,created_at.desc')
-export async function createEvent(event: { event_type: string; event_date: string; note: string }, files: File[]) {
+export const getEvents = () => request<EventRow[]>('events?select=*,event_attachments(file_name,object_path,content_type),event_catches(id,species_id,quantity,caught_on,caught_time,latitude,longitude,fish_species(id,slug,name_it,name_en))&order=event_date.desc,created_at.desc')
+export const getFishSpecies = () => request<FishSpeciesRow[]>('fish_species?select=id,slug,name_it,name_en&is_active=eq.true&order=name_it.asc')
+export async function getEventAttachmentUrl(objectPath: string, downloadName?: string) {
+  if (!url || !key) throw new Error('Backend is not configured.')
+  const session = await validSession()
+  const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/')
+  const response = await fetch(`${url}/storage/v1/object/sign/lagoon-attachments/${encodedPath}`, {
+    method: 'POST', headers: { apikey: key, Authorization: `Bearer ${session?.access_token ?? key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn: 3600 }),
+  })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload?.signedURL) throw new Error(payload?.message ?? 'Could not open this attachment.')
+  const signed = new URL(`${url}/storage/v1${payload.signedURL}`)
+  if (downloadName) signed.searchParams.set('download', downloadName)
+  return signed.toString()
+}
+export async function createEvent(event: { event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string }, catches: EventCatchInput[], files: File[]) {
   const [created] = await request<EventRow[]>('events?select=*', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(event) })
+  await saveEventCatches(created.id, catches)
+  await uploadEventFiles(created.id, files)
+  return created
+}
+async function saveEventCatches(eventId: string, catches: EventCatchInput[]) {
+  await request(`event_catches?event_id=eq.${eventId}`, { method: 'DELETE' })
+  if (catches.length) await request('event_catches', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(catches.map((item) => ({ ...item, event_id: eventId }))) })
+}
+async function uploadEventFiles(eventId: string, files: File[]) {
   for (const file of files) {
     const session = await validSession()
-    const objectPath = `${session?.user.id}/${created.id}/${crypto.randomUUID()}-${file.name}`
+    const objectPath = `${session?.user.id}/${eventId}/${crypto.randomUUID()}-${file.name}`
     const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/')
     const upload = await fetch(`${url}/storage/v1/object/lagoon-attachments/${encodedPath}`, { method: 'POST', headers: { apikey: key!, Authorization: `Bearer ${session?.access_token}`, 'Content-Type': file.type || 'application/octet-stream', 'x-upsert': 'false' }, body: file })
     if (!upload.ok) throw new Error(`Could not upload ${file.name}.`)
-    await request('event_attachments', { method: 'POST', body: JSON.stringify({ event_id: created.id, file_name: file.name, object_path: objectPath, content_type: file.type, size_bytes: file.size }) })
+    await request('event_attachments', { method: 'POST', body: JSON.stringify({ event_id: eventId, file_name: file.name, object_path: objectPath, content_type: file.type, size_bytes: file.size }) })
   }
-  return created
+}
+export async function updateEvent(eventId: string, event: { event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string }, catches: EventCatchInput[], files: File[]) {
+  await request(`events?id=eq.${eventId}`, { method: 'PATCH', body: JSON.stringify(event) })
+  await saveEventCatches(eventId, catches)
+  await uploadEventFiles(eventId, files)
+}
+export async function deleteEvent(eventId: string) {
+  const session = await validSession()
+  const attachments = await request<{ object_path: string }[]>(`event_attachments?select=object_path&event_id=eq.${eventId}`)
+  for (const { object_path: objectPath } of attachments) {
+    const encodedPath = objectPath.split('/').map(encodeURIComponent).join('/')
+    const response = await fetch(`${url}/storage/v1/object/lagoon-attachments/${encodedPath}`, { method: 'DELETE', headers: { apikey: key!, Authorization: `Bearer ${session?.access_token ?? key!}` } })
+    if (!response.ok) throw new Error('Could not delete all event attachments.')
+  }
+  await request(`events?id=eq.${eventId}`, { method: 'DELETE' })
 }
 export const getPosts = () => request<PostRow[]>('posts?select=*&order=created_at.desc&limit=50')
 export const createPost = (body: string) => request('posts', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ body }) })
@@ -83,4 +125,14 @@ export async function getWeatherStation() {
   const rows = await request<WeatherStationRow[]>('weather_stations?select=id,slug,name,area,source_url,source_license,source_time_basis,vertical_datum&slug=eq.punta-salute-canal-grande&limit=1')
   return rows[0] ?? null
 }
-export const getWeatherObservations = (stationId: string, limit = 288) => request<WeatherObservationRow[]>(`weather_observations?select=recorded_at,tide_level_m,water_temp_c&station_id=eq.${stationId}&order=recorded_at.desc&limit=${limit}`)
+export async function getWeatherObservations(stationId: string, limit = 288) {
+  const pageSize = 1000
+  const observations: WeatherObservationRow[] = []
+  for (let offset = 0; offset < limit; offset += pageSize) {
+    const pageLimit = Math.min(pageSize, limit - offset)
+    const page = await request<WeatherObservationRow[]>(`weather_observations?select=recorded_at,tide_level_m,water_temp_c&station_id=eq.${stationId}&order=recorded_at.desc&limit=${pageLimit}&offset=${offset}`)
+    observations.push(...page)
+    if (page.length < pageLimit) break
+  }
+  return observations
+}
