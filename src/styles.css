@@ -38,3 +38,22 @@
 .chart-tooltip__header strong{color:var(--text)}
 .chart-tooltip__header button{border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;padding:0 2px}
 @media(max-width:600px){.observation-chart{height:240px}.observation-axis-label{font-size:9px}.chart-tooltip{font-size:9px}}
+.metrics-grid.metrics-grid--source{grid-template-columns:repeat(4,minmax(0,1fr));max-width:none}
+.solar-attribution{display:inline-block;margin:-4px 0 13px 2px;color:var(--muted);font-size:9px;text-decoration:underline;text-underline-offset:2px}
+.location-settings{display:grid;gap:13px}
+.location-current{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:var(--green)}
+.location-current span{display:grid;gap:3px}
+.location-current small{font-size:9px;color:var(--muted)}
+.location-current strong{font-size:12px;color:var(--text)}
+.location-search-form{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:9px}
+.location-search-form .ds-field{margin:0}
+.location-search-form .button{height:40px;white-space:nowrap}
+.location-results{display:grid;max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:9px}
+.location-results button{display:flex;align-items:center;gap:9px;padding:10px 12px;border:0;border-bottom:1px solid var(--line);background:var(--surface);text-align:left;color:var(--text)}
+.location-results button:last-child{border-bottom:0}
+.location-results button:hover{background:var(--surface-2)}
+.location-results button>span{display:grid;gap:3px;flex:1;font-size:11px}
+.location-results button small,.location-message{color:var(--muted);font-size:10px}
+.location-message{margin:0;line-height:1.5}
+@media(max-width:1100px){.metrics-grid.metrics-grid--source{grid-template-columns:repeat(2,minmax(0,1fr));max-width:760px}}
+@media(max-width:600px){.metrics-grid.metrics-grid--source{grid-template-columns:repeat(2,minmax(0,1fr))}.metrics-grid--source .metric-card:last-child{grid-column:auto}.location-search-form{grid-template-columns:1fr}.location-search-form .button{justify-self:start}}

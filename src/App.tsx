@@ -1,12 +1,38 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Activity, ArrowRight, Bell, CalendarDays, ChevronDown, ChevronRight, Fish, LayoutDashboard, MapPin, Menu, MessageCircle, Moon, Paperclip, Plus, Search, Send, Settings, ShieldCheck, Sun, Thermometer, UserRound, Users, Waves, X } from 'lucide-react'
+import { Activity, ArrowRight, Bell, CalendarDays, ChevronDown, ChevronRight, Fish, LayoutDashboard, MapPin, Menu, MessageCircle, Moon, Paperclip, Plus, Search, Send, Settings, ShieldCheck, Sun, Sunrise, Sunset, Thermometer, UserRound, Users, Waves, X } from 'lucide-react'
 import type { HistoryRow } from './domain/weather'
 import { backendReady, createEvent, createMessage, createPost, exchangeOAuthCode, getEvents, getMessages, getPosts, getWeatherObservations, getWeatherStation, readSession, signIn, signInWithProvider, signOut, signUp, type EventRow, type MessageRow, type PostRow, type Session, type WeatherObservationRow, type WeatherStationRow } from './backend/supabase'
 import { t, type Language, type TranslationKey } from './i18n'
 import { AuthScreen, Avatar, Button, Card, CardHeader, Dialog, Field, IconButton, MetricCard, PageHeading } from './design-system'
+import { getSolarTimes, searchPlaces, type PlaceResult, type SolarTimes } from './services/solar'
 
 type Page = 'dashboard' | 'feed' | 'chat' | 'history' | 'forecast' | 'profile'
 type UserEvent = { id: string; type: string; date: string; note: string; attachments: string[] }
+type UserLocation = { name: string; country: string; latitude: number; longitude: number; source: 'gps' | 'manual' | 'fallback' }
+
+const locationStorageKey = 'lagoon.user-location'
+const veniceLocation: UserLocation = { name: 'Venezia', country: 'Italia', latitude: 45.4408, longitude: 12.3155, source: 'fallback' }
+
+function readUserLocation(): UserLocation | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(locationStorageKey) ?? 'null') as UserLocation | null
+    if (!value || !Number.isFinite(value.latitude) || !Number.isFinite(value.longitude) || !['gps', 'manual', 'fallback'].includes(value.source)) return null
+    return value
+  } catch { return null }
+}
+
+function storeUserLocation(location: UserLocation) {
+  try { localStorage.setItem(locationStorageKey, JSON.stringify(location)) } catch { /* The location remains usable for this session. */ }
+}
+
+function requestDeviceLocation(): Promise<UserLocation> {
+  if (!navigator.geolocation) return Promise.reject(new Error('Geolocation is unavailable.'))
+  return new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(
+    ({ coords }) => resolve({ name: '', country: '', latitude: coords.latitude, longitude: coords.longitude, source: 'gps' }),
+    reject,
+    { enableHighAccuracy: false, maximumAge: 6 * 60 * 60 * 1000, timeout: 10000 },
+  ))
+}
 
 function localDateValue() {
   const today = new Date()
@@ -33,6 +59,18 @@ export default function App() {
   const [posts, setPosts] = useState<PostRow[]>([])
   const [weatherStation, setWeatherStation] = useState<WeatherStationRow | null>(null)
   const [weatherObservations, setWeatherObservations] = useState<WeatherObservationRow[]>([])
+  const [location, setLocation] = useState<UserLocation>(() => readUserLocation() ?? veniceLocation)
+  const [locationReady, setLocationReady] = useState(() => { const saved = readUserLocation(); return Boolean(saved && saved.source !== 'gps') })
+  const locationChosenByUser = useRef(['manual', 'fallback'].includes(readUserLocation()?.source ?? ''))
+  const [locationDialogOpen, setLocationDialogOpen] = useState(false)
+  const [locationQuery, setLocationQuery] = useState('')
+  const [locationResults, setLocationResults] = useState<PlaceResult[]>([])
+  const [locationSearching, setLocationSearching] = useState(false)
+  const [locationMessage, setLocationMessage] = useState('')
+  const [locating, setLocating] = useState(false)
+  const [sunTimes, setSunTimes] = useState<SolarTimes | null>(null)
+  const [solarLoading, setSolarLoading] = useState(false)
+  const [solarError, setSolarError] = useState(false)
   const [draft, setDraft] = useState('')
   const [eventType, setEventType] = useState('Fishing trip')
   const [eventDate, setEventDate] = useState(localDateValue())
@@ -62,6 +100,29 @@ export default function App() {
     }).catch((cause: Error) => setError(cause.message))
   }, [session])
   useEffect(() => {
+    if (!session || locationChosenByUser.current) return
+    let cancelled = false
+    const setInitialLocation = (value: UserLocation) => {
+      storeUserLocation(value)
+      setLocation(value)
+      setLocationReady(true)
+    }
+    requestDeviceLocation().then((value) => {
+      if (!cancelled && !locationChosenByUser.current) setInitialLocation(value)
+    }).catch(() => {
+      if (!cancelled && !locationChosenByUser.current) setInitialLocation(veniceLocation)
+    })
+    return () => { cancelled = true }
+  }, [session])
+  useEffect(() => {
+    if (!session || !locationReady) return
+    let cancelled = false
+    setSolarLoading(true)
+    setSolarError(false)
+    getSolarTimes(location).then((result) => { if (!cancelled) setSunTimes(result) }).catch(() => { if (!cancelled) { setSunTimes(null); setSolarError(true) } }).finally(() => { if (!cancelled) setSolarLoading(false) })
+    return () => { cancelled = true }
+  }, [session, location.latitude, location.longitude, locationReady])
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
     const oauthError = params.get('error_description') ?? params.get('error')
@@ -81,6 +142,35 @@ export default function App() {
 
   const filteredHistory = useMemo(() => weatherObservations.map((row): HistoryRow => ({ recordedAt: row.recorded_at, station: weatherStation?.name ?? 'Weather station', tideLevel: row.tide_level_m, waterTemp: row.water_temp_c })).filter((row) => `${row.recordedAt} ${row.station}`.toLowerCase().includes(search.toLowerCase()) && row.recordedAt.startsWith(year)), [search, year, weatherObservations, weatherStation])
   const go = (id: Page) => { setPage(id); setMobileNav(false) }
+  const locationLabel = location.source === 'fallback' ? tr('fallbackVenice') : location.source === 'gps' ? tr('currentLocation') : `${location.name}${location.country ? `, ${location.country}` : ''}`
+  const chooseLocation = (value: UserLocation) => {
+    setToast(tr('locationSet'))
+    locationChosenByUser.current = true
+    storeUserLocation(value)
+    setLocation(value)
+    setLocationReady(true)
+    setSunTimes(null)
+    setLocationResults([])
+    setLocationQuery('')
+    setLocationMessage(tr('locationSet'))
+    setLocationDialogOpen(false)
+  }
+  const useDeviceLocation = async () => {
+    setLocating(true)
+    setLocationMessage('')
+    try { chooseLocation(await requestDeviceLocation()) }
+    catch (cause) { setLocationMessage((cause as GeolocationPositionError)?.code === 1 ? tr('locationPermissionDenied') : tr('locationUnavailable')) }
+    finally { setLocating(false) }
+  }
+  const searchForLocation = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!locationQuery.trim()) return
+    setLocationSearching(true)
+    setLocationMessage('')
+    try { setLocationResults(await searchPlaces(locationQuery.trim(), lang)) }
+    catch { setLocationResults([]); setLocationMessage(tr('locationSearchFailed')) }
+    finally { setLocationSearching(false) }
+  }
 
   if (!backendReady) return <BackendSetup tr={tr}/>
   if (!session) return <AuthScreen lang={lang} mode={authMode} setMode={setAuthMode} email={authEmail} setEmail={setAuthEmail} password={authPassword} setPassword={setAuthPassword} name={authName} setName={setAuthName} busy={busy} error={error} onOAuth={async (provider) => { setBusy(true); setError(''); try { await signInWithProvider(provider) } catch (cause) { setBusy(false); setError((cause as Error).message) } }} onSubmit={async (e) => { e.preventDefault(); setBusy(true); setError(''); try { const result = authMode === 'signin' ? await signIn(authEmail, authPassword) : await signUp(authEmail, authPassword, authName); if (result.access_token) setSession(result); else setError(tr('confirmEmail')) } catch (cause) { setError((cause as Error).message) } finally { setBusy(false) } }} />
@@ -88,7 +178,7 @@ export default function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${mobileNav ? 'sidebar-open' : ''}`}>
       <div className="brand"><div className="brand-mark"><Waves size={22} strokeWidth={2.5} /></div><span>lagoon<span className="brand-dot">.</span></span><IconButton className="close-nav" label={tr('closeMenu')} onClick={() => setMobileNav(false)}><X size={19}/></IconButton></div>
-      <button className="area-switch"><span className="area-icon"><MapPin size={17}/></span><span className="area-copy"><small>{tr('activeZone')}</small><strong>{tr('area')}</strong></span><ChevronDown size={16}/></button>
+      <button className="area-switch" onClick={() => { setLocationMessage(''); setLocationDialogOpen(true) }}><span className="area-icon"><MapPin size={17}/></span><span className="area-copy"><small>{tr('activeZone')}</small><strong>{locationLabel}</strong></span><ChevronDown size={16}/></button>
       <div className="side-label">{tr('workspace')}</div>
       <nav aria-label={tr('mainNavigation')}>{nav.map(({ id, key, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => go(id)}><Icon size={18}/><span>{tr(key)}</span></button>)}</nav>
       <div className="side-label menu-label">{tr('explore')}</div>
@@ -100,10 +190,24 @@ export default function App() {
     {mobileNav && <button className="nav-scrim" aria-label={tr('closeNavigation')} onClick={() => setMobileNav(false)} />}
     <main className="main-area">
       <header className="topbar"><div className="breadcrumbs"><IconButton className="mobile-menu" label={tr('openMenu')} onClick={() => setMobileNav(true)}><Menu size={21}/></IconButton><span>{tr('area')}</span><ChevronRight size={14}/><strong>{tr(({ dashboard: 'dashboard', feed: 'feed', chat: 'chat', history: 'history', forecast: 'forecast', profile: 'profile' } as const)[page])}</strong></div><div className="top-actions"><label className="search-box"><Search size={16}/><input aria-label={tr('search')} placeholder={`${tr('search')}…`} value={search} onChange={(e) => setSearch(e.target.value)}/><kbd>⌘ K</kbd></label><IconButton className="theme-toggle" onClick={() => setDark(!dark)} label={tr('changeTheme')}>{dark ? <Sun size={18}/> : <Moon size={18}/>}</IconButton><IconButton className="language-toggle" onClick={() => setLang(lang === 'it' ? 'en' : 'it')} label={tr('changeLanguage')}>{lang.toUpperCase()}</IconButton><IconButton className="notification-button" label={tr('notifications')} onClick={() => setToast(tr('noNotifications'))}><Bell size={18}/></IconButton><Avatar initials={(session.user.email ?? 'U').slice(0, 2).toUpperCase()} tone="me" className="top-avatar"/></div></header>
-      <div className="page-content">{error && <div className="backend-error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}{page === 'dashboard' && <Dashboard posts={posts} sessionName={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} station={weatherStation} observations={weatherObservations.slice(0,288)} tr={tr} lang={lang} go={go}/ >}{page === 'feed' && <Feed tr={tr} post={post} setPost={setPost} posts={posts} onPost={async () => { if (post.trim()) { try { await createPost(post.trim()); setPosts(await getPosts()); setPost(''); setToast(tr('postPublished')) } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'chat' && <Chat tr={tr} messages={messages} draft={draft} setDraft={setDraft} onSend={async () => { if (draft.trim()) { try { await createMessage(draft.trim()); setMessages(await getMessages()); setDraft('') } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'history' && <HistoryPage tr={tr} search={search} setSearch={setSearch} year={year} setYear={setYear} rows={filteredHistory}/ >}{page === 'forecast' && <Forecast tr={tr} period={period} setPeriod={setPeriod}/ >}{page === 'profile' && <Profile tr={tr} lang={lang} name={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} events={events} eventModalOpen={eventModalOpen} eventType={eventType} eventDate={eventDate} eventNote={eventNote} eventFiles={eventFiles} setEventType={setEventType} setEventDate={setEventDate} setEventNote={setEventNote} setEventFiles={setEventFiles} onOpenEvent={() => { setEventType('Fishing trip'); setEventDate(localDateValue()); setEventNote(''); setEventFiles([]); setEventModalOpen(true) }} onCloseEvent={() => setEventModalOpen(false)} onSaveEvent={async (event) => { try { const saved = await createEvent({ event_type: event.type, event_date: event.date, note: event.note }, event.attachments); setEvents((current) => [{ ...event, id: saved.id, attachments: event.attachments.map((file) => file.name) }, ...current]); setEventModalOpen(false); setToast(tr('eventSaved')) } catch (cause) { setError((cause as Error).message) } }}/>}</div>
+      <div className="page-content">{error && <div className="backend-error" role="alert">{error}<button onClick={() => setError('')}>×</button></div>}{page === 'dashboard' && <Dashboard posts={posts} sessionName={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} station={weatherStation} observations={weatherObservations.slice(0,288)} locationLabel={locationLabel} locationReady={locationReady} sunTimes={sunTimes} solarLoading={solarLoading} solarError={solarError} tr={tr} lang={lang} go={go}/ >}{page === 'feed' && <Feed tr={tr} post={post} setPost={setPost} posts={posts} onPost={async () => { if (post.trim()) { try { await createPost(post.trim()); setPosts(await getPosts()); setPost(''); setToast(tr('postPublished')) } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'chat' && <Chat tr={tr} messages={messages} draft={draft} setDraft={setDraft} onSend={async () => { if (draft.trim()) { try { await createMessage(draft.trim()); setMessages(await getMessages()); setDraft('') } catch (cause) { setError((cause as Error).message) } } }}/ >}{page === 'history' && <HistoryPage tr={tr} search={search} setSearch={setSearch} year={year} setYear={setYear} rows={filteredHistory}/ >}{page === 'forecast' && <Forecast tr={tr} period={period} setPeriod={setPeriod}/ >}{page === 'profile' && <Profile tr={tr} lang={lang} name={String(session.user.user_metadata?.display_name ?? session.user.email ?? 'Member')} events={events} eventModalOpen={eventModalOpen} eventType={eventType} eventDate={eventDate} eventNote={eventNote} eventFiles={eventFiles} setEventType={setEventType} setEventDate={setEventDate} setEventNote={setEventNote} setEventFiles={setEventFiles} onOpenEvent={() => { setEventType('Fishing trip'); setEventDate(localDateValue()); setEventNote(''); setEventFiles([]); setEventModalOpen(true) }} onCloseEvent={() => setEventModalOpen(false)} onSaveEvent={async (event) => { try { const saved = await createEvent({ event_type: event.type, event_date: event.date, note: event.note }, event.attachments); setEvents((current) => [{ ...event, id: saved.id, attachments: event.attachments.map((file) => file.name) }, ...current]); setEventModalOpen(false); setToast(tr('eventSaved')) } catch (cause) { setError((cause as Error).message) } }}/>}</div>
       <footer className="page-footer"><span>{tr('connectedCloud')}</span><span><button onClick={() => { signOut(); setSession(null) }}>{tr('signOut')}</button> <span className="footer-sep">·</span> Lagoon <Waves size={13}/></span></footer>
     </main>
     {toast && <div className="toast" role="status"><ShieldCheck size={17}/>{toast}<IconButton label={tr('close')} onClick={() => setToast('')}><X size={15}/></IconButton></div>}
+    {locationDialogOpen && <Dialog eyebrow={tr('locationSettings')} title={tr('setLocation')} description={tr('locationDescription')} closeLabel={tr('close')} onClose={() => setLocationDialogOpen(false)}>
+      <div className="location-settings">
+        <div className="location-current"><MapPin size={16}/><span><small>{tr('activeZone')}</small><strong>{locationLabel}</strong></span></div>
+        <Button type="button" variant="secondary" disabled={locating} onClick={useDeviceLocation}><MapPin size={15}/>{locating ? tr('searchingLocation') : tr('useMyLocation')}</Button>
+        {locationMessage && <p className="location-message" role="status">{locationMessage}</p>}
+        <form className="location-search-form" onSubmit={searchForLocation}>
+          <Field label={tr('searchLocation')}><input className="ds-field__control" value={locationQuery} onChange={(event) => setLocationQuery(event.target.value)} placeholder={tr('locationSearchPlaceholder')}/></Field>
+          <Button type="submit" variant="primary" disabled={!locationQuery.trim() || locationSearching}><Search size={15}/>{locationSearching ? tr('searchingLocation') : tr('search')}</Button>
+        </form>
+        {locationResults.length > 0 && <div className="location-results" aria-label={tr('searchLocation')}>{locationResults.map((place) => <button type="button" key={place.id} onClick={() => chooseLocation({ name: place.admin1 ? `${place.name}, ${place.admin1}` : place.name, country: place.country, latitude: place.latitude, longitude: place.longitude, source: 'manual' })}><MapPin size={15}/><span>{place.name}{place.admin1 ? `, ${place.admin1}` : ''}<small>{place.country}</small></span><ChevronRight size={15}/></button>)}</div>}
+        {locationQuery && !locationSearching && locationResults.length === 0 && !locationMessage && <p className="location-message">{tr('noLocationResults')}</p>}
+        <Button type="button" variant="secondary" onClick={() => chooseLocation(veniceLocation)}>{tr('useVenice')}</Button>
+      </div>
+    </Dialog>}
   </div>
 }
 
@@ -111,11 +215,13 @@ type Tr = (key: TranslationKey) => string
 
 function BackendSetup({ tr }: { tr: Tr }) { return <main className="auth-screen"><Card className="auth-card"><div className="brand"><div className="brand-mark"><Waves size={22}/></div><span>lagoon<span className="brand-dot">.</span></span></div><h1>{tr('connectBackend')}</h1><p>{tr('backendSetupText')}</p><p>{tr('backendSetupHelp')}</p></Card></main> }
 
-function Dashboard({ posts, sessionName, station, observations, tr, lang, go }: { posts: PostRow[]; sessionName: string; station: WeatherStationRow | null; observations: WeatherObservationRow[]; tr: Tr; lang: Language; go: (page: Page) => void }) {
+function Dashboard({ posts, sessionName, station, observations, locationLabel, locationReady, sunTimes, solarLoading, solarError, tr, lang, go }: { posts: PostRow[]; sessionName: string; station: WeatherStationRow | null; observations: WeatherObservationRow[]; locationLabel: string; locationReady: boolean; sunTimes: SolarTimes | null; solarLoading: boolean; solarError: boolean; tr: Tr; lang: Language; go: (page: Page) => void }) {
   const latest = observations[0]
   const latestWater = observations.find((row) => row.water_temp_c !== null)
   const latestTide = observations.find((row) => row.tide_level_m !== null)
   const formatReadingTime = (value?: string) => value ? new Date(`${value.replace(' ', 'T')}Z`).toLocaleString(lang === 'it' ? 'it-IT' : 'en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) : tr('noReading')
+  const formatSolarTime = (value?: string) => value?.match(/T(\d{2}:\d{2})/)?.[1] ?? '—'
+  const solarDetail = !locationReady ? tr('locatingLocation') : solarLoading ? tr('solarLoading') : solarError ? tr('sunTimesUnavailable') : `${locationLabel} · ${tr('locationToday')}`
   const graphRows = observations.slice().reverse()
   return <>
     <PageHeading eyebrow={`${new Date().toLocaleDateString(lang === 'it' ? 'it-IT' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).toUpperCase()}  ·  ${tr('area').toUpperCase()}`} title={`${tr('goodMorning')}, ${sessionName}`} subtitle={tr('greeting')} action={<Button variant="secondary" onClick={() => go('history')}><CalendarDays size={16}/>{tr('viewHistory')}<ArrowRight size={15}/></Button>}/>
@@ -123,7 +229,10 @@ function Dashboard({ posts, sessionName, station, observations, tr, lang, go }: 
     <section className="metrics-grid metrics-grid--source" aria-label={tr('weather')}>
       <MetricCard icon={<Thermometer/>} label={tr('waterTemperature')} value={latestWater?.water_temp_c?.toFixed(1) ?? '—'} unit="°C" detail={`${station?.name ?? 'Punta Salute Canal Grande'} · ${formatReadingTime(latestWater?.recorded_at)}`} color="blue" trend=""/>
       <MetricCard icon={<Waves/>} label={tr('tideLevel')} value={latestTide?.tide_level_m?.toFixed(2) ?? '—'} unit="m" detail={`${station?.vertical_datum ?? 'ZMPS 1897'} · ${formatReadingTime(latestTide?.recorded_at)}`} color="green" trend=""/>
+      <MetricCard icon={<Sunrise/>} label={tr('sunrise')} value={!locationReady || solarLoading ? '…' : formatSolarTime(sunTimes?.sunrise)} unit="" detail={solarDetail} color="coral" trend=""/>
+      <MetricCard icon={<Sunset/>} label={tr('sunset')} value={!locationReady || solarLoading ? '…' : formatSolarTime(sunTimes?.sunset)} unit="" detail={solarDetail} color="violet" trend=""/>
     </section>
+    <a className="solar-attribution" href="https://open-meteo.com/" target="_blank" rel="noreferrer">{tr('solarAttribution')}</a>
     <div className="content-grid">
       <Card className="chart-panel"><CardHeader eyebrow={tr('sourceObservations')} title={tr('chartTitle')} description={station ? `${station.name} · ${tr('chartDescription')}` : tr('importCsvHint')}/>{graphRows.length ? <ObservationChart rows={graphRows} lang={lang} tr={tr}/> : <div className="empty-state">{tr('noObservationsLoaded')}</div>}<div className="chart-note"><span>{tr('fromComune')}</span><button onClick={() => go('history')}>{tr('browseData')} <ArrowRight size={14}/></button></div></Card>
       <Card className="stations-panel"><CardHeader eyebrow={tr('localNetwork')} title={tr('stations')}/>{station ? <div className="station-row selected"><div className="station-symbol"><MapPin size={17}/></div><div className="station-info"><strong>{station.name}</strong><span>{station.area}</span></div><div className="station-values"><strong>{observations.length.toLocaleString(lang === 'it' ? 'it-IT' : 'en-GB')}</strong><span>{tr('recentRows')}</span></div></div> : <p className="empty-state">{tr('noStationsConfigured')}</p>}<a className="text-action" href={station?.source_url} target="_blank" rel="noreferrer">{tr('sourceAndLicense')} <ArrowRight size={15}/></a></Card>

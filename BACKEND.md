@@ -60,7 +60,8 @@ Social sign-in redirects back to the app URL. Add `http://localhost:5173/**` to 
 - Private event journal with date, notes, and file uploads.
 - Community text posts.
 - Private saved notes in the chat area. Direct user-to-user messaging is not implemented yet.
+- Daily sunrise and sunset from Open-Meteo, using the browser's saved location. If location permission is declined on first use, Venice is selected; users can change the city from the active-location control. The app requests the API timezone automatically and links to Open-Meteo for attribution.
 
-Weather readings, tide data, and forecasts currently have no provider connected, so their UI shows empty states instead of fabricated values. Add a trusted data provider and ingestion process before displaying those readings.
+Weather readings, tide data, and weather forecasts still have no live provider connected, so their UI shows empty states instead of fabricated values. The free Open-Meteo API is for non-commercial use; commercial use requires a paid plan.
 
 All user tables have row-level security enabled. The public browser key is designed to be visible; access is constrained by the policies in the migration. Never expose the service-role key. Apply schema changes through versioned SQL migrations; the SQL Editor instructions above are the fastest first deployment, while Supabase CLI migrations are preferable once the project is in active development.
