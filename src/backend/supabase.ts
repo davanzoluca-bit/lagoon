@@ -9,7 +9,8 @@ export type EventAttachmentRow = { file_name: string; object_path: string; conte
 export type EventRow = { id: string; owner_id: string; event_type: string; event_date: string; start_at: string | null; end_at: string | null; note: string; tags: string[]; created_at: string; event_participants?: { user_id: string }[]; event_attachments?: EventAttachmentRow[]; event_catches?: EventCatchRow[] }
 export type PostAttachmentRow = { file_name: string; object_path: string; content_type: string }
 export type PostVisibility = 'public' | 'friends' | 'selected'
-export type PostRow = { id: string; body: string; created_at: string; author_id: string; visibility: PostVisibility; post_attachments?: PostAttachmentRow[] }
+export type PostRow = { id: string; body: string; created_at: string; author_id: string; visibility: PostVisibility; author?: FriendProfileRow | null; post_attachments?: PostAttachmentRow[] }
+export type LunarPhaseRow = { phase_date: string; phase_code: 'LN' | 'LP' | 'PQ' | 'UQ'; solar_time_source: string }
 export type MessageRow = { id: string; body: string; created_at: string; sender_id: string }
 export type WeatherStationRow = { id: string; slug: string; name: string; area: string; source_url: string; source_license: string; source_time_basis: string; vertical_datum: string }
 export type WeatherObservationRow = { recorded_at: string; tide_level_m: number | null; water_temp_c: number | null }
@@ -165,7 +166,15 @@ export async function deleteEvent(eventId: string) {
   }
   await request(`events?id=eq.${eventId}`, { method: 'DELETE' })
 }
-export const getPosts = () => request<PostRow[]>('posts?select=*,post_attachments(file_name,object_path,content_type)&order=created_at.desc&limit=50')
+export async function getPosts() {
+  const posts = await request<PostRow[]>('posts?select=*,post_attachments(file_name,object_path,content_type)&order=created_at.desc&limit=50')
+  const authorIds = [...new Set(posts.map((post) => post.author_id))]
+  if (!authorIds.length) return posts
+  const profiles = await request<FriendProfileRow[]>(`profiles?select=id,display_name&id=in.(${authorIds.map(encodeURIComponent).join(',')})`).catch(() => [])
+  const byId = new Map(profiles.map((profile) => [profile.id, profile]))
+  return posts.map((post) => ({ ...post, author: byId.get(post.author_id) ?? null }))
+}
+export const getLunarPhases = () => request<LunarPhaseRow[]>('lunar_phases?select=phase_date,phase_code,solar_time_source&order=phase_date.asc')
 export async function createPost(body: string, files: File[] = [], visibility: PostVisibility = 'public', audienceIds: string[] = []) {
   if (visibility === 'selected' && audienceIds.length === 0) throw new Error('Select at least one friend for this post.')
   const [created] = await request<PostRow[]>('posts?select=*', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ body, visibility }) })

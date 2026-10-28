@@ -40,6 +40,24 @@
 @media(max-width:600px){.observation-chart{height:240px}.observation-axis-label{font-size:9px}.chart-tooltip{font-size:9px}}
 .metrics-grid.metrics-grid--source{grid-template-columns:repeat(4,minmax(0,1fr));max-width:none}
 .solar-attribution{display:inline-block;margin:-4px 0 13px 2px;color:var(--muted);font-size:9px;text-decoration:underline;text-underline-offset:2px}
+.lunar-card{display:flex;align-items:center;gap:13px;margin:0 0 14px;padding:14px 16px}
+.lunar-card__icon{display:grid;place-items:center;width:42px;height:42px;flex:none;border-radius:13px;background:#eee9f5;color:#78649b}
+.lunar-card__main,.lunar-card__next{display:grid;gap:4px}
+.lunar-card__main{flex:1;min-width:0}
+.lunar-card__main strong,.lunar-card__next strong{font:700 14px Manrope,sans-serif;color:var(--text)}
+.lunar-card__main>small,.lunar-card__next>small,.lunar-card__next>span,.lunar-card__basis{font-size:9px;color:var(--muted)}
+.lunar-card__next{padding-left:16px;border-left:1px solid var(--line)}
+.lunar-card__basis{align-self:flex-end;margin-left:8px}
+.post-author-line{display:flex;align-items:center;gap:9px}
+.post-author-line>.avatar{width:34px;height:34px;flex:none;font-size:10px}
+.post-author-line>span{display:grid;gap:3px;min-width:0}
+.post-author-line strong{font-size:11px;color:var(--text)}
+.post-author-line small{font-size:9px;color:var(--muted)}
+.community-entry{display:grid;gap:10px}
+.community-entry>p,.dashboard-post>p{margin:0;color:var(--text);font-size:12px;line-height:1.55}
+.dashboard-post{display:grid;gap:9px}
+.dashboard-post__media{font-size:9px;color:var(--muted)}
+@media(max-width:600px){.lunar-card{align-items:flex-start;flex-wrap:wrap}.lunar-card__next{margin-left:auto}.lunar-card__basis{width:100%;margin-left:55px}}
 .location-settings{display:grid;gap:13px}
 .location-current{display:flex;align-items:center;gap:10px;padding:11px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface-2);color:var(--green)}
 .location-current span{display:grid;gap:3px}

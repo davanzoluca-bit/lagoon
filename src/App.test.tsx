@@ -19,6 +19,7 @@ const backend = vi.hoisted(() => ({
   deleteEvent: vi.fn(),
   getMessages: vi.fn(),
   getPosts: vi.fn(),
+  getLunarPhases: vi.fn(),
   getWeatherObservations: vi.fn(),
   getWeatherStation: vi.fn(),
   getSolarTimes: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock('./backend/supabase', () => ({
   getEventAttachmentUrl: backend.getEventAttachmentUrl,
   getMessages: backend.getMessages,
   getPosts: backend.getPosts,
+  getLunarPhases: backend.getLunarPhases,
   getWeatherObservations: backend.getWeatherObservations,
   getWeatherStation: backend.getWeatherStation,
   createEvent: backend.createEvent,
@@ -77,6 +79,7 @@ describe('dashboard weather readings', () => {
     backend.deleteEvent.mockResolvedValue(undefined)
     backend.getMessages.mockResolvedValue([])
     backend.getPosts.mockResolvedValue([])
+    backend.getLunarPhases.mockResolvedValue([])
     backend.getWeatherStation.mockResolvedValue({
       id: '590ab8d1-c1f1-4e11-913d-a13fb45ef3d7',
       slug: 'punta-salute-canal-grande',
@@ -124,6 +127,31 @@ describe('dashboard weather readings', () => {
     fireEvent.pointerDown(chart, { clientX: 800 })
     expect(await screen.findByRole('status')).toHaveTextContent('22,7 °C')
     expect(screen.getByRole('status')).toHaveTextContent('— m')
+  })
+
+  it('shows the most recent and upcoming phases from the lunar calendar', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.getLunarPhases.mockResolvedValue([
+      { phase_date: '2026-10-26', phase_code: 'LP', solar_time_source: '5.13' },
+      { phase_date: '2026-11-01', phase_code: 'UQ', solar_time_source: '21.29' },
+    ])
+
+    render(<App />)
+
+    expect(await screen.findByText('🌕 Luna piena')).toBeInTheDocument()
+    expect(screen.getByText('🌗 Ultimo quarto')).toBeInTheDocument()
+  })
+
+  it('shows the author on community posts in the dashboard', async () => {
+    backend.getWeatherObservations.mockResolvedValue([])
+    backend.getPosts.mockResolvedValue([{
+      id: 'author-post', body: 'Alba in laguna', author_id: 'friend-1', visibility: 'public', author: { id: 'friend-1', display_name: 'Marta Rossi' }, created_at: '2026-10-28T06:00:00Z', post_attachments: [],
+    }])
+
+    render(<App />)
+
+    expect(await screen.findByText('Marta Rossi')).toBeInTheDocument()
+    expect(screen.getByText('Alba in laguna')).toBeInTheDocument()
   })
 
   it('keeps the dashboard usable and explains when the database has no observations', async () => {
