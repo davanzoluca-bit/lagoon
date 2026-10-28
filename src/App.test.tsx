@@ -22,6 +22,7 @@ const backend = vi.hoisted(() => ({
   getLunarPhases: vi.fn(),
   getWeatherObservations: vi.fn(),
   getWeatherStation: vi.fn(),
+  refreshLiveWeather: vi.fn(),
   getSolarTimes: vi.fn(),
   searchPlaces: vi.fn(),
   session: { access_token: 'test-token', refresh_token: 'test-refresh', user: { id: 'test-user', email: 'test@example.com', user_metadata: { display_name: 'Test User' } } },
@@ -45,6 +46,7 @@ vi.mock('./backend/supabase', () => ({
   getLunarPhases: backend.getLunarPhases,
   getWeatherObservations: backend.getWeatherObservations,
   getWeatherStation: backend.getWeatherStation,
+  refreshLiveWeather: backend.refreshLiveWeather,
   createEvent: backend.createEvent,
   updateEvent: backend.updateEvent,
   deleteEvent: backend.deleteEvent,
@@ -90,6 +92,7 @@ describe('dashboard weather readings', () => {
       source_time_basis: 'UTC+01:00 solar time, year-round',
       vertical_datum: 'ZMPS 1897',
     })
+    backend.refreshLiveWeather.mockResolvedValue([])
     backend.getSolarTimes.mockResolvedValue({ sunrise: '2026-10-28T07:24', sunset: '2026-10-28T17:58', date: '2026-10-28', timezone: 'Europe/Rome' })
     backend.searchPlaces.mockResolvedValue([])
   })

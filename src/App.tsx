@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Activity, ArrowRight, Bell, CalendarDays, ChevronDown, ChevronRight, Fish, LayoutDashboard, LocateFixed, MapPin, Menu, MessageCircle, Moon, Paperclip, Pencil, Plus, Search, Send, Settings, ShieldCheck, Sun, Sunrise, Sunset, Thermometer, Trash2, UserCheck, UserPlus, UserRound, UserX, Users, Waves, X } from 'lucide-react'
 import type { HistoryRow } from './domain/weather'
-import { acceptFriendRequest, backendReady, createEvent, createMessage, createPost, deleteEvent as removeEvent, exchangeOAuthCode, getAcceptedFriends, getEventAttachmentUrl, getEvents, getFishSpecies, getFriendConnections, getLunarPhases, getMessages, getPosts, getPostMediaUrl, getWeatherObservations, getWeatherStation, readSession, removeFriendConnection, searchUsers, sendFriendRequest, signIn, signInWithProvider, signOut, signUp, type EventAttachmentRow, type EventCatchInput, type EventRow, type FishSpeciesRow, type FriendConnection, type FriendProfileRow, type LunarPhaseRow, type MessageRow, type PostRow, type PostVisibility, type Session, type WeatherObservationRow, type WeatherStationRow, updateEvent } from './backend/supabase'
+import { acceptFriendRequest, backendReady, createEvent, createMessage, createPost, deleteEvent as removeEvent, exchangeOAuthCode, getAcceptedFriends, getEventAttachmentUrl, getEvents, getFishSpecies, getFriendConnections, getLunarPhases, getMessages, getPosts, getPostMediaUrl, getWeatherObservations, getWeatherStation, readSession, refreshLiveWeather, removeFriendConnection, searchUsers, sendFriendRequest, signIn, signInWithProvider, signOut, signUp, type EventAttachmentRow, type EventCatchInput, type EventRow, type FishSpeciesRow, type FriendConnection, type FriendProfileRow, type LunarPhaseRow, type MessageRow, type PostRow, type PostVisibility, type Session, type WeatherObservationRow, type WeatherStationRow, updateEvent } from './backend/supabase'
 import { t, type Language, type TranslationKey } from './i18n'
 import { AuthScreen, Avatar, Button, Card, CardHeader, Dialog, Field, IconButton, MetricCard, PageHeading, Switch } from './design-system'
 import { getSolarTimes, searchPlaces, type PlaceResult, type SolarTimes } from './services/solar'
@@ -56,6 +56,13 @@ function localDateValue() {
 function localDateTimeInput(value: string) {
   const date = new Date(value)
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
+}
+
+function mergeWeatherObservations(current: WeatherObservationRow[], incoming: WeatherObservationRow[]) {
+  const merged = new Map<string, WeatherObservationRow>()
+  for (const row of incoming) merged.set(row.recorded_at, row)
+  for (const row of current) merged.set(row.recorded_at, row)
+  return [...merged.values()].sort((a, b) => b.recorded_at.localeCompare(a.recorded_at)).slice(0, 9000)
 }
 
 const nav: { id: Page; key: TranslationKey; icon: typeof LayoutDashboard }[] = [
@@ -118,9 +125,25 @@ export default function App() {
     getLunarPhases().then(setLunarPhases).catch((cause: Error) => setError(cause.message))
     getWeatherStation().then(async (stationRow) => {
       setWeatherStation(stationRow)
-      setWeatherObservations(stationRow ? await getWeatherObservations(stationRow.id, 9000) : [])
+      const rows = stationRow ? await getWeatherObservations(stationRow.id, 9000) : []
+      setWeatherObservations((current) => mergeWeatherObservations(current, rows))
     }).catch((cause: Error) => setError(cause.message))
   }, [session])
+  useEffect(() => {
+    if (!session || !weatherStation || !import.meta.env.PROD) return
+    let cancelled = false
+    const sync = async () => {
+      try {
+        const inserted = await refreshLiveWeather()
+        if (!cancelled && inserted.length) setWeatherObservations((current) => mergeWeatherObservations(current, inserted))
+      } catch (cause) {
+        if (!cancelled) setError((cause as Error).message)
+      }
+    }
+    void sync()
+    const interval = window.setInterval(() => { void sync() }, 5 * 60 * 1000)
+    return () => { cancelled = true; window.clearInterval(interval) }
+  }, [session, weatherStation?.id])
   useEffect(() => {
     if (!session || locationChosenByUser.current) return
     let cancelled = false

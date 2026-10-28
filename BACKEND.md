@@ -28,6 +28,12 @@ The prepared file `data/weather/punta-salute-canal-grande-2026-04-to-10.csv` con
 
 The source file is raw and can contain sensor gaps. The import retains blank tide readings and does not interpolate or validate them.
 
+## Refresh live Punta Salute water temperature
+
+Vercel serves the authenticated `/api/refresh-weather` function. The dashboard calls it on load and every five minutes while open. It reads the Comune JSON feed, keeps only station `1025` (Punta Salute Canal Grande), and inserts readings using the `(station_id, recorded_at)` primary key with `ON CONFLICT DO NOTHING`, so retries do not create duplicate rows. The source supplies temperature only; tide values remain null.
+
+In Vercel **Project → Settings → Environment Variables**, add `SUPABASE_SERVICE_ROLE_KEY` using the project's server-side `service_role` key, then redeploy. Keep this key server-only: never prefix it with `VITE_` or add it to `.env.example`. The function reuses the existing `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` values to validate the signed-in user's access token. Local Vite dev does not run Vercel Functions, so live refresh runs on the deployed site.
+
 ## Enable social sign-in
 
 The login screen includes Google and Instagram buttons. Each provider needs its own credentials in Supabase; the browser never receives the provider secret.

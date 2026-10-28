@@ -199,6 +199,14 @@ export async function getWeatherStation() {
   const rows = await request<WeatherStationRow[]>('weather_stations?select=id,slug,name,area,source_url,source_license,source_time_basis,vertical_datum&slug=eq.punta-salute-canal-grande&limit=1')
   return rows[0] ?? null
 }
+export async function refreshLiveWeather() {
+  const session = await validSession()
+  if (!session) throw new Error('Sign in to refresh the live readings.')
+  const response = await fetch('/api/refresh-weather', { method: 'POST', headers: { Authorization: `Bearer ${session.access_token}` }, cache: 'no-store' })
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) throw new Error(payload?.error ?? `Live refresh failed (${response.status}).`)
+  return payload.inserted as WeatherObservationRow[]
+}
 export async function getWeatherObservations(stationId: string, limit = 288) {
   const pageSize = 1000
   const observations: WeatherObservationRow[] = []
