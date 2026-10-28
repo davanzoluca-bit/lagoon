@@ -1,0 +1,4 @@
+.ds-card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.ds-card-header .eyebrow{margin-bottom:7px}
+.ds-card-header h2{font:700 14px Manrope,sans-serif;letter-spacing:-.2px;margin:0;color:#2b3b32}
+.ds-card-header p{font-size:9px;margin:5px 0 0;color:var(--ds-color-text-muted)}

@@ -1,0 +1,28 @@
+.ds-card {
+  padding: var(--ds-space-4);
+  background: var(--ds-color-surface);
+  border: 1px solid var(--ds-color-border);
+  border-radius: var(--ds-radius-lg);
+  box-shadow: var(--ds-shadow-panel);
+}
+
+.ds-card.chart-panel { padding: 17px; }
+.ds-card.stations-panel { padding: 17px 15px 12px; }
+.ds-card.tide-card { padding: 14px 16px; background: linear-gradient(115deg, #f1f7f4, #f8faf7); }
+.ds-card.forecast-card { padding: 15px; }
+.ds-card.forecast-hero { min-height: 210px; padding: 25px 28px; background: linear-gradient(115deg, #f2f7f1, #fcfaf4); }
+.ds-card.extended-forecast { margin-top: 14px; }
+.ds-card.profile-overview, .ds-card.chat-layout, .ds-card.history-panel { padding: 0; }
+.ds-card.event-panel, .ds-card.badges-panel { padding: 16px; }
+.ds-card.assets-panel { padding: 17px; }
+
+[data-theme='dark'] .ds-card.tide-card,
+[data-theme='dark'] .ds-card.forecast-hero { background: linear-gradient(110deg, #24342b, #302f25); }
+
+@media (max-width: 600px) {
+  .ds-card.chart-panel { padding: 14px; }
+  .ds-card.stations-panel { padding: 15px; }
+  .ds-card.tide-card { padding: 13px; }
+  .ds-card.forecast-card { padding: 14px; }
+  .ds-card.forecast-hero { min-height: 190px; padding: 18px; }
+}

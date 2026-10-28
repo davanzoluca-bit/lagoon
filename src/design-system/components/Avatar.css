@@ -1,0 +1,9 @@
+.avatar,.top-avatar{width:33px;height:33px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;flex:none}
+.avatar-me,.top-avatar{background:#e9d9c3;color:#76593c}
+.avatar-pink{background:#f5dfdf;color:#9d6064}
+.avatar-orange{background:#f5e2d3;color:#a46e43}
+.avatar-blue{background:#dce8f0;color:#56778e}
+.avatar.top-avatar{width:29px;height:29px}
+.avatar.profile-avatar{width:58px;height:58px;margin-top:-24px;border:4px solid var(--surface);font-size:15px;position:relative}
+
+@media(max-width:600px){.avatar.profile-avatar{width:48px;height:48px}}
